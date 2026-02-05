@@ -35,11 +35,10 @@ import {
   getResumeInfo,
 } from './state.js';
 import { getVibesafuStatus } from '../vibesafu.js';
-import { needsSetup, getMissingFiles, runSetup } from '../setup.js';
+import { needsSetup, getMissingFiles } from '../setup.js';
 import { executeWithClaudeCode } from '../executor.js';
 import { ConsoleOutputHandler, type FSDOutputHandler } from './output-handler.js';
 import { InkOutputHandler } from './ink-output-handler.js';
-import * as readline from 'readline';
 
 const MAX_QA_FIX_ATTEMPTS = 3;
 
@@ -89,6 +88,19 @@ export async function runFSDMode(goal: string | undefined, options: FSDOptions =
   const cwd = process.cwd();
   const maxCost = parseFloat(options.maxCost || '10');
   currentGoal = goal || undefined;
+
+  // Check project setup BEFORE Ink initialization (to avoid stdin conflicts)
+  if (needsSetup(cwd)) {
+    const missing = getMissingFiles(cwd);
+    console.log(chalk.yellow(`\n⚠ 프로젝트 셋업이 필요합니다.`));
+    console.log(chalk.gray(`  누락된 파일: ${missing.join(', ')}\n`));
+    console.log(chalk.white(`FSD 모드는 CLAUDE.md가 필요합니다.`));
+    console.log(chalk.white(`먼저 interactive mode에서 프로젝트 셋업을 완료해주세요:\n`));
+    console.log(chalk.cyan(`  autotunez start\n`));
+    console.log(chalk.gray(`셋업 완료 후 다시 FSD 모드를 실행하세요:`));
+    console.log(chalk.cyan(`  autotunez fsd "${goal || 'your goal'}"\n`));
+    process.exit(1);
+  }
 
   // Initialize Ink UI by default (disable with --no-ink)
   let inkHandler: InkOutputHandler | null = null;
@@ -214,53 +226,6 @@ export async function runFSDMode(goal: string | undefined, options: FSDOptions =
   const vibesafuStatus = getVibesafuStatus();
   const vibesafuActive = vibesafuStatus.cliInstalled && vibesafuStatus.hookInstalled;
   output.securityStatus(vibesafuActive);
-
-  // Check if project setup is needed (like interactive mode)
-  if (needsSetup(cwd)) {
-    const missing = getMissingFiles(cwd);
-    console.log(chalk.yellow(`⚠ 프로젝트 셋업이 필요합니다. 누락된 파일: ${missing.join(', ')}`));
-
-    const setupRl = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout,
-    });
-
-    const doSetup = await new Promise<boolean>((resolve) => {
-      setupRl.question(chalk.yellow('  초기 셋업을 진행할까요? (Y/n): '), (answer: string) => {
-        setupRl.close();
-        const trimmed = answer.trim().toLowerCase();
-        resolve(trimmed === '' || trimmed === 'y' || trimmed === 'yes');
-      });
-    });
-
-    if (doSetup) {
-      let setupSuccess = false;
-      while (!setupSuccess) {
-        setupSuccess = await runSetup('', cwd);
-        if (!setupSuccess) {
-          console.log(chalk.red('셋업이 완료되지 않았습니다.'));
-          const retryRl = readline.createInterface({
-            input: process.stdin,
-            output: process.stdout,
-          });
-          const retry = await new Promise<boolean>((resolve) => {
-            retryRl.question(chalk.yellow('  다시 시도할까요? (Y/n): '), (answer: string) => {
-              retryRl.close();
-              const trimmed = answer.trim().toLowerCase();
-              resolve(trimmed === '' || trimmed === 'y' || trimmed === 'yes');
-            });
-          });
-          if (!retry) {
-            console.log(chalk.red('FSD 모드는 CLAUDE.md가 필요합니다. 셋업을 완료해주세요.'));
-            process.exit(1);
-          }
-        }
-      }
-    } else {
-      console.log(chalk.red('FSD 모드는 CLAUDE.md가 필요합니다. 셋업을 완료해주세요.'));
-      process.exit(1);
-    }
-  }
 
   // Load project context
   let claudeMd: string | undefined;
