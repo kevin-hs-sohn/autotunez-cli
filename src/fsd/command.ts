@@ -94,14 +94,32 @@ export async function runFSDMode(goal: string | undefined, options: FSDOptions =
   // Check project setup BEFORE Ink initialization (to avoid stdin conflicts)
   if (needsSetup(cwd)) {
     const missing = getMissingFiles(cwd);
-    console.log(chalk.yellow(`\n⚠ 프로젝트 셋업이 필요합니다.`));
-    console.log(chalk.gray(`  누락된 파일: ${missing.join(', ')}\n`));
-    console.log(chalk.white(`Interactive mode에서 셋업을 진행합니다...`));
-    console.log(chalk.gray(`셋업 완료 후 /fsd ${goal || '<goal>'} 로 FSD 모드 전환 가능\n`));
+    console.log(chalk.yellow(`\n⚠ Project setup required.`));
+    console.log(chalk.gray(`  Missing: ${missing.join(', ')}\n`));
+    console.log(chalk.white(`Starting interactive mode for setup...`));
+    console.log(chalk.gray(`After setup, use /fsd <goal> to start FSD mode.\n`));
+
+    // Build initial messages - if goal provided, treat it as project description
+    const initialMessages: Array<{ id: string; role: 'user' | 'assistant'; content: string }> = [];
+
+    if (goal) {
+      // User already provided project description via FSD command
+      initialMessages.push({
+        id: '1',
+        role: 'user',
+        content: goal,
+      });
+      initialMessages.push({
+        id: '2',
+        role: 'assistant',
+        content: `Got it! "${goal}" - let me help you set up this project.\n\nTo create CLAUDE.md, I need a bit more context:\n- What's the main tech stack? (e.g., React, Node.js, Python)\n- Any specific requirements or constraints?\n- What's the MVP scope?`,
+      });
+    }
 
     // Auto-launch interactive mode for setup
     await startInkSession({
-      welcomeMessage: `프로젝트 셋업이 필요합니다. 먼저 프로젝트에 대해 알려주세요.\n\n셋업 완료 후 /fsd ${goal || '<goal>'} 명령으로 FSD 모드를 시작할 수 있습니다.`,
+      welcomeMessage: goal ? undefined : `Project setup required. Tell me about your project to create CLAUDE.md.\n\nAfter setup, use /fsd <goal> to start FSD mode.`,
+      initialMessages: goal ? initialMessages : undefined,
       onSubmit: async (input: string, conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }>, lastClaudeOutput?: string) => {
         return transformPrompt('', input, undefined, {
           conversationHistory,
@@ -120,7 +138,7 @@ export async function runFSDMode(goal: string | undefined, options: FSDOptions =
       onFSD: async (fsdGoal: string) => {
         // Re-check setup after interactive session
         if (needsSetup(cwd)) {
-          console.log(chalk.yellow('\n⚠ 아직 CLAUDE.md가 없습니다. 셋업을 먼저 완료해주세요.\n'));
+          console.log(chalk.yellow('\nCLAUDE.md not found yet. Please complete setup first.\n'));
           return;
         }
         // Run FSD mode
