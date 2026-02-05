@@ -37,6 +37,8 @@ import {
 import { getVibesafuStatus } from '../vibesafu.js';
 import { needsSetup, getMissingFiles } from '../setup.js';
 import { executeWithClaudeCode } from '../executor.js';
+import { startInkSession, type StreamEvent } from '../ui/session.js';
+import { transformPrompt } from '../agent.js';
 import { ConsoleOutputHandler, type FSDOutputHandler } from './output-handler.js';
 import { InkOutputHandler } from './ink-output-handler.js';
 
@@ -94,12 +96,38 @@ export async function runFSDMode(goal: string | undefined, options: FSDOptions =
     const missing = getMissingFiles(cwd);
     console.log(chalk.yellow(`\n⚠ 프로젝트 셋업이 필요합니다.`));
     console.log(chalk.gray(`  누락된 파일: ${missing.join(', ')}\n`));
-    console.log(chalk.white(`FSD 모드는 CLAUDE.md가 필요합니다.`));
-    console.log(chalk.white(`먼저 interactive mode에서 프로젝트 셋업을 완료해주세요:\n`));
-    console.log(chalk.cyan(`  autotunez start\n`));
-    console.log(chalk.gray(`셋업 완료 후 다시 FSD 모드를 실행하세요:`));
-    console.log(chalk.cyan(`  autotunez fsd "${goal || 'your goal'}"\n`));
-    process.exit(1);
+    console.log(chalk.white(`Interactive mode에서 셋업을 진행합니다...`));
+    console.log(chalk.gray(`셋업 완료 후 /fsd ${goal || '<goal>'} 로 FSD 모드 전환 가능\n`));
+
+    // Auto-launch interactive mode for setup
+    await startInkSession({
+      welcomeMessage: `프로젝트 셋업이 필요합니다. 먼저 프로젝트에 대해 알려주세요.\n\n셋업 완료 후 /fsd ${goal || '<goal>'} 명령으로 FSD 모드를 시작할 수 있습니다.`,
+      onSubmit: async (input: string, conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }>, lastClaudeOutput?: string) => {
+        return transformPrompt('', input, undefined, {
+          conversationHistory,
+          lastClaudeOutput,
+        });
+      },
+      onExecute: async (prompt: string, onStreamEvent: (event: StreamEvent) => void) => {
+        const result = await executeWithClaudeCode(prompt, {
+          cwd,
+          onStreamEvent,
+        });
+        if (!result.success) {
+          throw new Error(`Exited with code ${result.exitCode}`);
+        }
+      },
+      onFSD: async (fsdGoal: string) => {
+        // Re-check setup after interactive session
+        if (needsSetup(cwd)) {
+          console.log(chalk.yellow('\n⚠ 아직 CLAUDE.md가 없습니다. 셋업을 먼저 완료해주세요.\n'));
+          return;
+        }
+        // Run FSD mode
+        await runFSDMode(fsdGoal, options);
+      },
+    });
+    return; // Exit after interactive session ends
   }
 
   // Initialize Ink UI by default (disable with --no-ink)
