@@ -54,8 +54,9 @@ export function isVibesafuCLIInstalled(): { installed: boolean; version?: string
       timeout: 10000,
     });
 
-    // npx vibesafu shows usage on stdout
-    if (npxResult.stdout?.includes('vibesafu') || npxResult.stdout?.includes('VibeSafu')) {
+    // npx vibesafu shows usage on stderr (not stdout)
+    const output = npxResult.stdout || npxResult.stderr || '';
+    if (output.includes('vibesafu') || output.includes('VibeSafu')) {
       return { installed: true };
     }
   } catch {

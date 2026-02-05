@@ -11,7 +11,7 @@ import {
 } from './templates.js';
 import type { ProjectConfig } from './types.js';
 import { ApiClient } from './api-client.js';
-import { getApiKey, getServerUrl } from './config.js';
+import { getApiKey, getAutotunezKey, getServerUrl } from './config.js';
 import { startSetupSession } from './ui/setup-session.js';
 
 const REQUIRED_FILES = ['CLAUDE.md', 'SCRATCHPAD.md', 'plan.md'];
@@ -83,17 +83,27 @@ export function getMissingFiles(cwd: string): string[] {
  * @param initialInput - Optional project description (e.g., from FSD goal). Skips skill selection if provided.
  */
 export async function runSetup(_apiKey: string, cwd: string, initialInput?: string): Promise<boolean> {
-  // Check API key
-  const apiKey = getApiKey();
-  if (!apiKey) {
+  // Check API keys
+  const anthropicKey = getApiKey();
+  const autotunezKey = getAutotunezKey();
+
+  if (!autotunezKey) {
     console.log(
-      chalk.red('✗ API key not configured. Run: autotunez config --set-key')
+      chalk.red('✗ autotunez API key not configured. Get one at: https://autotunez.dev/dashboard')
+    );
+    return false;
+  }
+
+  if (!anthropicKey) {
+    console.log(
+      chalk.red('✗ Anthropic API key not configured. Run: autotunez config --set-key')
     );
     return false;
   }
 
   const apiClient = new ApiClient({
-    apiKey,
+    autotunezKey,
+    anthropicKey,
     serverUrl: getServerUrl(),
   });
 
