@@ -121,10 +121,55 @@ export async function runFSDMode(goal: string | undefined, options: FSDOptions =
       welcomeMessage: goal ? undefined : `Project setup required. Tell me about your project to create CLAUDE.md.\n\nAfter setup, use /fsd <goal> to start FSD mode.`,
       initialMessages: goal ? initialMessages : undefined,
       onSubmit: async (input: string, conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }>, lastClaudeOutput?: string) => {
-        return transformPrompt('', input, undefined, {
-          conversationHistory,
-          lastClaudeOutput,
-        });
+        // Check if CLAUDE.md was created during conversation
+        const claudeMdPath = path.join(cwd, 'CLAUDE.md');
+        if (fs.existsSync(claudeMdPath)) {
+          // Setup complete! Now use transformPrompt with context
+          const claudeMd = fs.readFileSync(claudeMdPath, 'utf-8');
+          return transformPrompt('', input, claudeMd, {
+            claudeMd,
+            conversationHistory,
+            lastClaudeOutput,
+          });
+        }
+
+        // Still in setup mode - always return clarification to continue interview
+        // Build interview response based on conversation progress
+        const msgCount = conversationHistory.length;
+
+        if (msgCount <= 2) {
+          // First response - ask for tech stack and requirements
+          return {
+            type: 'clarification' as const,
+            content: `Thanks for the project description!\n\nTo create CLAUDE.md, I need a few more details:\n\n1. **Tech Stack**: What languages/frameworks will you use? (e.g., Python, TypeScript, React, Node.js)\n2. **Key Requirements**: Any specific APIs, databases, or integrations needed?\n3. **MVP Scope**: What's the minimum viable feature set for the first version?`,
+          };
+        } else if (msgCount <= 4) {
+          // Second response - confirm and suggest creating CLAUDE.md
+          return {
+            type: 'clarification' as const,
+            content: `Got it! I have enough information to set up the project.\n\nI'll create CLAUDE.md with:\n- Project overview and goals\n- Tech stack configuration\n- Development guidelines\n- MVP scope\n\nShould I create CLAUDE.md now? (Type "yes" or "go ahead" to proceed)`,
+          };
+        } else {
+          // After confirmation - execute setup
+          const lowerInput = input.toLowerCase();
+          if (lowerInput.includes('yes') || lowerInput.includes('go') || lowerInput.includes('proceed') || lowerInput.includes('create') || lowerInput.includes('ok')) {
+            // Generate setup prompt for Claude Code
+            const projectInfo = conversationHistory
+              .filter(m => m.role === 'user')
+              .map(m => m.content)
+              .join('\n\n');
+
+            return {
+              type: 'prompt' as const,
+              content: `Create CLAUDE.md for this project based on the following requirements:\n\n${projectInfo}\n\nThe CLAUDE.md should include:\n1. Project overview\n2. Tech stack\n3. Code style guidelines\n4. Key commands (build, test, lint)\n5. Boundaries (always/ask first/never rules)\n\nAfter creating CLAUDE.md, also create a basic project structure if it doesn't exist.`,
+            };
+          }
+          // User asking more questions
+          return {
+            type: 'clarification' as const,
+            content: `Sure, what else would you like to clarify before I create the project setup?\n\n(Type "yes" or "go ahead" when ready to create CLAUDE.md)`,
+          };
+        }
       },
       onExecute: async (prompt: string, onStreamEvent: (event: StreamEvent) => void) => {
         const result = await executeWithClaudeCode(prompt, {
