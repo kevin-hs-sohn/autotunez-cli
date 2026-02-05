@@ -24,3 +24,9 @@ Thumbs.db
 
 # Test coverage
 coverage/
+
+# Project-specific docs (not for open source)
+CLAUDE.md
+SCRATCHPAD.md
+resources.md
+plan.md
