@@ -26,32 +26,43 @@ export interface VibesafuStatus {
 // ============================================================================
 
 /**
- * Check if vibesafu CLI is installed
+ * Check if vibesafu CLI is installed (directly or via npx)
  */
 export function isVibesafuCLIInstalled(): { installed: boolean; version?: string } {
+  // First, try direct command
   try {
-    // vibesafu doesn't support --version, so we just check if the command exists
-    // by running it with no args (it shows usage and exits with code 1, but that's OK)
     const result = spawnSync('vibesafu', [], {
       encoding: 'utf-8',
       timeout: 5000,
     });
 
-    // If the command exists, it will show usage (even with exit code 1)
     // ENOENT error means command not found
-    if (result.error && (result.error as NodeJS.ErrnoException).code === 'ENOENT') {
-      return { installed: false };
+    if (!(result.error && (result.error as NodeJS.ErrnoException).code === 'ENOENT')) {
+      // Command exists if we got any output (stdout or stderr)
+      if (result.stdout || result.stderr) {
+        return { installed: true };
+      }
     }
+  } catch {
+    // Fall through to npx check
+  }
 
-    // Command exists if we got any output (stdout or stderr)
-    if (result.stdout || result.stderr) {
+  // If direct command not found, try npx (for npx-only installations)
+  try {
+    const npxResult = spawnSync('npx', ['vibesafu'], {
+      encoding: 'utf-8',
+      timeout: 10000,
+    });
+
+    // npx vibesafu shows usage on stdout
+    if (npxResult.stdout?.includes('vibesafu') || npxResult.stdout?.includes('VibeSafu')) {
       return { installed: true };
     }
-
-    return { installed: false };
   } catch {
-    return { installed: false };
+    // npx also failed
   }
+
+  return { installed: false };
 }
 
 /**
