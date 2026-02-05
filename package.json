@@ -1,6 +1,6 @@
 {
   "name": "autotunez",
-  "version": "0.5.21",
+  "version": "0.5.23",
   "description": "CLI for vibe coding with Claude - transform messy prompts into optimized Claude Code instructions",
   "type": "module",
   "bin": {
@@ -30,14 +30,24 @@
     "type": "git",
     "url": "git+https://github.com/kevin-hs-sohn/autotunez-cli.git"
   },
+  "homepage": "https://github.com/kevin-hs-sohn/autotunez-cli#readme",
+  "bugs": {
+    "url": "https://github.com/kevin-hs-sohn/autotunez-cli/issues"
+  },
   "keywords": [
-    "autotunez",
+    "claude-code",
     "claude",
+    "anthropic",
     "ai",
     "cli",
     "vibe-coding",
-    "prompt",
-    "assistant"
+    "prompt-engineering",
+    "coding-assistant",
+    "developer-tools",
+    "autonomous-coding",
+    "llm",
+    "ai-coding",
+    "autotunez"
   ],
   "author": "Kevin Sohn",
   "license": "MIT",
