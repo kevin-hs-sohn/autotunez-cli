@@ -75,12 +75,14 @@ export function getMissingFiles(cwd: string): string[] {
 
 /**
  * Run the full setup flow using Ink UI:
- * 1. Ask skill level
+ * 1. Ask skill level (skipped if initialInput provided)
  * 2. Interview to gather project info
  * 3. Extract ProjectConfig
  * 4. Generate and write files
+ *
+ * @param initialInput - Optional project description (e.g., from FSD goal). Skips skill selection if provided.
  */
-export async function runSetup(_apiKey: string, cwd: string): Promise<boolean> {
+export async function runSetup(_apiKey: string, cwd: string, initialInput?: string): Promise<boolean> {
   // Check API key
   const apiKey = getApiKey();
   if (!apiKey) {
@@ -99,6 +101,7 @@ export async function runSetup(_apiKey: string, cwd: string): Promise<boolean> {
 
   try {
     const success = await startSetupSession({
+      initialInput,
       onInterview: async (messages, level) => {
         const response = await apiClient.interview(messages, level);
         return {

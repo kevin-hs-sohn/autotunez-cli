@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, type Instance } from 'ink';
+import { render } from 'ink';
 import { App } from './App.js';
 import type { Task, Message } from './types.js';
 

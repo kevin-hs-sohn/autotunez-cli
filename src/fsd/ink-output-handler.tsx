@@ -44,7 +44,7 @@ interface InkFSDAppProps {
 }
 
 function InkFSDApp({ goal, maxCost, onConfirmResponse, onPause, onResume, onUserInput }: InkFSDAppProps) {
-  const { exit } = useApp();
+  useApp(); // For Ink lifecycle
   const [state, setState] = useState<AppState>({
     phase: 'planning',
     goal,
@@ -364,7 +364,7 @@ export class InkOutputHandler implements FSDOutputHandler {
     globalSetState = null;
   }
 
-  start(goal: string): void {
+  start(_goal: string): void {
     // Already initialized via initialize()
   }
 
@@ -405,7 +405,7 @@ export class InkOutputHandler implements FSDOutputHandler {
     }));
   }
 
-  milestoneStart(id: string, title: string): void {
+  milestoneStart(id: string, _title: string): void {
     this.update(prev => ({
       ...prev,
       phase: 'executing',
@@ -416,7 +416,7 @@ export class InkOutputHandler implements FSDOutputHandler {
     }));
   }
 
-  milestoneComplete(id: string, title: string): void {
+  milestoneComplete(id: string, _title: string): void {
     this.update(prev => ({
       ...prev,
       completedMilestones: [...prev.completedMilestones, id],
@@ -440,7 +440,7 @@ export class InkOutputHandler implements FSDOutputHandler {
     }
   }
 
-  milestoneSkipped(id: string, reason: string): void {
+  milestoneSkipped(id: string, _reason: string): void {
     this.update(prev => ({
       ...prev,
       milestones: prev.milestones.map(m =>
@@ -449,11 +449,11 @@ export class InkOutputHandler implements FSDOutputHandler {
     }));
   }
 
-  qaStart(milestoneId: string): void {
+  qaStart(_milestoneId: string): void {
     this.update(prev => ({ ...prev, phase: 'qa' }));
   }
 
-  qaComplete(passed: boolean): void {
+  qaComplete(_passed: boolean): void {
     this.update(prev => ({ ...prev, phase: 'executing' }));
   }
 

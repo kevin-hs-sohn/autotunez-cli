@@ -35,10 +35,8 @@ import {
   getResumeInfo,
 } from './state.js';
 import { getVibesafuStatus } from '../vibesafu.js';
-import { needsSetup, getMissingFiles } from '../setup.js';
+import { needsSetup, getMissingFiles, runSetup } from '../setup.js';
 import { executeWithClaudeCode } from '../executor.js';
-import { startInkSession, type StreamEvent } from '../ui/session.js';
-import { transformPrompt } from '../agent.js';
 import { ConsoleOutputHandler, type FSDOutputHandler } from './output-handler.js';
 import { InkOutputHandler } from './ink-output-handler.js';
 
@@ -96,101 +94,30 @@ export async function runFSDMode(goal: string | undefined, options: FSDOptions =
     const missing = getMissingFiles(cwd);
     console.log(chalk.yellow(`\n⚠ Project setup required.`));
     console.log(chalk.gray(`  Missing: ${missing.join(', ')}\n`));
-    console.log(chalk.white(`Starting interactive mode for setup...`));
-    console.log(chalk.gray(`After setup, use /fsd <goal> to start FSD mode.\n`));
-
-    // Build initial messages - if goal provided, treat it as project description
-    const initialMessages: Array<{ id: string; role: 'user' | 'assistant'; content: string }> = [];
-
+    console.log(chalk.white(`Starting setup interview...`));
     if (goal) {
-      // User already provided project description via FSD command
-      initialMessages.push({
-        id: '1',
-        role: 'user',
-        content: goal,
-      });
-      initialMessages.push({
-        id: '2',
-        role: 'assistant',
-        content: `Got it! "${goal}" - let me help you set up this project.\n\nTo create CLAUDE.md, I need a bit more context:\n- What's the main tech stack? (e.g., React, Node.js, Python)\n- Any specific requirements or constraints?\n- What's the MVP scope?`,
-      });
+      console.log(chalk.gray(`Using "${goal.slice(0, 50)}${goal.length > 50 ? '...' : ''}" as project description.\n`));
     }
 
-    // Auto-launch interactive mode for setup
-    await startInkSession({
-      welcomeMessage: goal ? undefined : `Project setup required. Tell me about your project to create CLAUDE.md.\n\nAfter setup, use /fsd <goal> to start FSD mode.`,
-      initialMessages: goal ? initialMessages : undefined,
-      onSubmit: async (input: string, conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }>, lastClaudeOutput?: string) => {
-        // Check if CLAUDE.md was created during conversation
-        const claudeMdPath = path.join(cwd, 'CLAUDE.md');
-        if (fs.existsSync(claudeMdPath)) {
-          // Setup complete! Now use transformPrompt with context
-          const claudeMd = fs.readFileSync(claudeMdPath, 'utf-8');
-          return transformPrompt('', input, claudeMd, {
-            claudeMd,
-            conversationHistory,
-            lastClaudeOutput,
-          });
-        }
+    // Run setup with goal as initial input (if provided)
+    const setupSuccess = await runSetup('', cwd, goal);
 
-        // Still in setup mode - always return clarification to continue interview
-        // Build interview response based on conversation progress
-        const msgCount = conversationHistory.length;
+    if (!setupSuccess) {
+      console.log(chalk.red('\nSetup was not completed. Please try again.'));
+      process.exit(1);
+    }
 
-        if (msgCount <= 2) {
-          // First response - ask for tech stack and requirements
-          return {
-            type: 'clarification' as const,
-            content: `Thanks for the project description!\n\nTo create CLAUDE.md, I need a few more details:\n\n1. **Tech Stack**: What languages/frameworks will you use? (e.g., Python, TypeScript, React, Node.js)\n2. **Key Requirements**: Any specific APIs, databases, or integrations needed?\n3. **MVP Scope**: What's the minimum viable feature set for the first version?`,
-          };
-        } else if (msgCount <= 4) {
-          // Second response - confirm and suggest creating CLAUDE.md
-          return {
-            type: 'clarification' as const,
-            content: `Got it! I have enough information to set up the project.\n\nI'll create CLAUDE.md with:\n- Project overview and goals\n- Tech stack configuration\n- Development guidelines\n- MVP scope\n\nShould I create CLAUDE.md now? (Type "yes" or "go ahead" to proceed)`,
-          };
-        } else {
-          // After confirmation - execute setup
-          const lowerInput = input.toLowerCase();
-          if (lowerInput.includes('yes') || lowerInput.includes('go') || lowerInput.includes('proceed') || lowerInput.includes('create') || lowerInput.includes('ok')) {
-            // Generate setup prompt for Claude Code
-            const projectInfo = conversationHistory
-              .filter(m => m.role === 'user')
-              .map(m => m.content)
-              .join('\n\n');
+    console.log(chalk.green('\n✓ Project setup complete!'));
 
-            return {
-              type: 'prompt' as const,
-              content: `Create CLAUDE.md for this project based on the following requirements:\n\n${projectInfo}\n\nThe CLAUDE.md should include:\n1. Project overview\n2. Tech stack\n3. Code style guidelines\n4. Key commands (build, test, lint)\n5. Boundaries (always/ask first/never rules)\n\nAfter creating CLAUDE.md, also create a basic project structure if it doesn't exist.`,
-            };
-          }
-          // User asking more questions
-          return {
-            type: 'clarification' as const,
-            content: `Sure, what else would you like to clarify before I create the project setup?\n\n(Type "yes" or "go ahead" when ready to create CLAUDE.md)`,
-          };
-        }
-      },
-      onExecute: async (prompt: string, onStreamEvent: (event: StreamEvent) => void) => {
-        const result = await executeWithClaudeCode(prompt, {
-          cwd,
-          onStreamEvent,
-        });
-        if (!result.success) {
-          throw new Error(`Exited with code ${result.exitCode}`);
-        }
-      },
-      onFSD: async (fsdGoal: string) => {
-        // Re-check setup after interactive session
-        if (needsSetup(cwd)) {
-          console.log(chalk.yellow('\nCLAUDE.md not found yet. Please complete setup first.\n'));
-          return;
-        }
-        // Run FSD mode
-        await runFSDMode(fsdGoal, options);
-      },
-    });
-    return; // Exit after interactive session ends
+    // After setup, continue to FSD mode if goal was provided
+    if (goal) {
+      console.log(chalk.cyan(`\nContinuing to FSD mode with goal: "${goal.slice(0, 50)}${goal.length > 50 ? '...' : ''}"\n`));
+      // Re-run FSD mode now that setup is complete
+      // Don't return - fall through to continue with FSD execution
+    } else {
+      console.log(chalk.gray('\nRun `autotunez fsd "<your goal>"` to start FSD mode.\n'));
+      return;
+    }
   }
 
   // Initialize Ink UI by default (disable with --no-ink)
