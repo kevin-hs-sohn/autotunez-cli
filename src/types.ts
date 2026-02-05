@@ -151,6 +151,10 @@ export interface FSDExecutionState {
   totalPrompts: number;
   learnings: string[];
   startTime: number;
+  /** Claude Code session ID for context continuity across milestones */
+  claudeSessionId?: string;
+  /** User interactions during pause (for context when resuming) */
+  interactiveHistory?: Array<{ role: 'user' | 'assistant'; content: string; timestamp: number }>;
 }
 
 export interface FSDConfig {

@@ -21,6 +21,8 @@ export interface ExecutorContext {
   gitRules?: string;  // Git protection rules to inject into prompts
   onProgress: (state: FSDExecutionState) => void;
   onLog: (message: string) => void;
+  /** Callback when session ID is obtained/updated */
+  onSessionId?: (sessionId: string) => void;
 }
 
 /**
@@ -152,6 +154,8 @@ export interface SecureExecutionOptions {
   cwd: string;
   onOutput?: (chunk: string) => void;
   onSecurityEvent?: (event: SecurityEvent) => void;
+  /** Resume from existing session for context continuity */
+  resumeSessionId?: string;
 }
 
 export interface SecurityEvent {
@@ -166,10 +170,16 @@ export interface SecurityEvent {
 export async function executeClaudeCode(
   prompt: string,
   cwd: string,
-  onOutput?: (chunk: string) => void
-): Promise<{ success: boolean; output: string }> {
+  onOutput?: (chunk: string) => void,
+  resumeSessionId?: string
+): Promise<{ success: boolean; output: string; sessionId?: string }> {
   return new Promise((resolve) => {
-    const claude = spawn('claude', ['--print', '-p', prompt], {
+    const args = ['--print', '--output-format', 'stream-json', '-p', prompt];
+    if (resumeSessionId) {
+      args.push('--resume', resumeSessionId);
+    }
+
+    const claude = spawn('claude', args, {
       cwd,
       stdio: ['pipe', 'pipe', 'pipe'],
       env: { ...process.env, FORCE_COLOR: '0' },
@@ -177,11 +187,33 @@ export async function executeClaudeCode(
 
     let output = '';
     let errorOutput = '';
+    let sessionId: string | undefined;
+    let buffer = '';
 
     claude.stdout.on('data', (data) => {
-      const chunk = data.toString();
-      output += chunk;
-      onOutput?.(chunk);
+      buffer += data.toString();
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const event = JSON.parse(line);
+          if (event.session_id) sessionId = event.session_id;
+          // Extract text content for output
+          if (event.type === 'assistant' && event.message?.content) {
+            for (const block of event.message.content) {
+              if (block.type === 'text' && block.text) {
+                output += block.text;
+                onOutput?.(block.text);
+              }
+            }
+          }
+        } catch {
+          output += line + '\n';
+          onOutput?.(line + '\n');
+        }
+      }
     });
 
     claude.stderr.on('data', (data) => {
@@ -192,6 +224,7 @@ export async function executeClaudeCode(
       resolve({
         success: code === 0,
         output: output || errorOutput,
+        sessionId,
       });
     });
 
@@ -199,6 +232,7 @@ export async function executeClaudeCode(
       resolve({
         success: false,
         output: err.message,
+        sessionId,
       });
     });
   });
@@ -216,16 +250,21 @@ export async function executeClaudeCode(
 export async function executeClaudeCodeSecure(
   prompt: string,
   options: SecureExecutionOptions
-): Promise<{ success: boolean; output: string; securityEvents: SecurityEvent[] }> {
-  const { cwd, onOutput, onSecurityEvent } = options;
+): Promise<{ success: boolean; output: string; securityEvents: SecurityEvent[]; sessionId?: string }> {
+  const { cwd, onOutput, onSecurityEvent, resumeSessionId } = options;
   const securityEvents: SecurityEvent[] = [];
 
   // Take snapshot of project files before execution
   const beforeSnapshot = await takeFileSnapshot(cwd);
 
   return new Promise((resolve) => {
-    // Run Claude Code in normal mode - security hooks handle command review
-    const claude = spawn('claude', ['--print', '-p', prompt], {
+    // Run Claude Code with stream-json for session ID tracking
+    const args = ['--print', '--output-format', 'stream-json', '-p', prompt];
+    if (resumeSessionId) {
+      args.push('--resume', resumeSessionId);
+    }
+
+    const claude = spawn('claude', args, {
       cwd,
       stdio: ['pipe', 'pipe', 'pipe'],
       env: { ...process.env, FORCE_COLOR: '0' },
@@ -233,11 +272,33 @@ export async function executeClaudeCodeSecure(
 
     let output = '';
     let errorOutput = '';
+    let sessionId: string | undefined;
+    let buffer = '';
 
     claude.stdout.on('data', (data) => {
-      const chunk = data.toString();
-      output += chunk;
-      onOutput?.(chunk);
+      buffer += data.toString();
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const event = JSON.parse(line);
+          if (event.session_id) sessionId = event.session_id;
+          // Extract text content for output
+          if (event.type === 'assistant' && event.message?.content) {
+            for (const block of event.message.content) {
+              if (block.type === 'text' && block.text) {
+                output += block.text;
+                onOutput?.(block.text);
+              }
+            }
+          }
+        } catch {
+          output += line + '\n';
+          onOutput?.(line + '\n');
+        }
+      }
     });
 
     claude.stderr.on('data', (data) => {
@@ -290,6 +351,7 @@ export async function executeClaudeCodeSecure(
         success: code === 0,
         output: output || errorOutput,
         securityEvents,
+        sessionId,
       });
     });
 
@@ -298,6 +360,7 @@ export async function executeClaudeCodeSecure(
         success: false,
         output: err.message,
         securityEvents,
+        sessionId,
       });
     });
   });
@@ -531,6 +594,7 @@ export async function executeMilestone(
     // Always use secure execution - security is handled via PreToolUse hooks
     const result = await executeClaudeCodeSecure(prompt, {
       cwd: ctx.projectPath,
+      resumeSessionId: ctx.state.claudeSessionId,
       onOutput: (chunk) => {
         onLog(redactSecrets(chunk));
       },
@@ -546,6 +610,12 @@ export async function executeMilestone(
         }
       },
     });
+
+    // Update session ID for context continuity
+    if (result.sessionId) {
+      ctx.state.claudeSessionId = result.sessionId;
+      ctx.onSessionId?.(result.sessionId);
+    }
 
     // Update cost tracking
     ctx.state.totalPrompts++;
@@ -666,6 +736,8 @@ export function createInitialState(): FSDExecutionState {
     totalPrompts: 0,
     learnings: [],
     startTime: Date.now(),
+    claudeSessionId: undefined,
+    interactiveHistory: [],
   };
 }
 
