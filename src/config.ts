@@ -48,6 +48,11 @@ export function validateAutotunezKey(key: string): boolean {
 }
 
 export function getApiKey(): string | undefined {
+  // Priority: env var > config file
+  const envKey = process.env.ANTHROPIC_API_KEY;
+  if (envKey && validateApiKey(envKey)) {
+    return envKey;
+  }
   return loadConfig().apiKey;
 }
 
