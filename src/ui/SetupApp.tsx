@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { Box, Text, useApp, useInput } from 'ink';
 import { MessageArea } from './MessageArea.js';
 import { InputField } from './InputField.js';
@@ -19,6 +19,8 @@ interface SetupAppProps {
     messages: Array<{ role: 'user' | 'assistant'; content: string }>
   ) => Promise<void>;
   onExit?: () => void;
+  /** Initial project description (e.g., from FSD goal). Skips skill selection if provided. */
+  initialInput?: string;
 }
 
 type SetupPhase = 'skill_select' | 'interview' | 'extracting' | 'generating' | 'done';
@@ -28,10 +30,12 @@ export function SetupApp({
   onExtract,
   onComplete,
   onExit,
+  initialInput,
 }: SetupAppProps) {
   const { exit } = useApp();
-  const [phase, setPhase] = useState<SetupPhase>('skill_select');
-  const [skillLevel, setSkillLevel] = useState<SkillLevel | null>(null);
+  // Skip skill selection if initialInput is provided
+  const [phase, setPhase] = useState<SetupPhase>(initialInput ? 'interview' : 'skill_select');
+  const [skillLevel, setSkillLevel] = useState<SkillLevel | null>(initialInput ? 'expert' : null);
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
   const [conversationHistory, setConversationHistory] = useState<
@@ -39,6 +43,7 @@ export function SetupApp({
   >([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [initialInputProcessed, setInitialInputProcessed] = useState(false);
 
   const handleExit = useCallback(() => {
     if (onExit) {
@@ -85,8 +90,8 @@ export function SetupApp({
 
   const startInterview = useCallback(async (level: SkillLevel) => {
     const initialMsg = level === 'beginner'
-      ? '안녕하세요! 앱을 만들고 싶어요.'
-      : '프로젝트 셋업해줘.';
+      ? 'Hi! I want to build an app.'
+      : 'Set up my project.';
 
     const newHistory = [{ role: 'user' as const, content: initialMsg }];
     setConversationHistory(newHistory);
@@ -95,12 +100,12 @@ export function SetupApp({
       id: '0',
       role: 'assistant',
       content: level === 'beginner'
-        ? '입문자 모드로 시작합니다. 편하게 이야기해주세요!'
-        : '숙련자 모드로 시작합니다. 빠르게 진행할게요!',
+        ? 'Starting beginner mode. Feel free to describe your project!'
+        : 'Starting expert mode. Let\'s get this set up quickly!',
     }]);
 
     setIsLoading(true);
-    const taskId = addTask('인터뷰 시작 중...', 'in_progress');
+    const taskId = addTask('Starting interview...', 'in_progress');
 
     try {
       const response = await onInterview(newHistory, level);
@@ -124,7 +129,7 @@ export function SetupApp({
       setMessages((prev) => [...prev, {
         id: Date.now().toString(),
         role: 'system',
-        content: error instanceof Error ? error.message : '오류가 발생했습니다',
+        content: error instanceof Error ? error.message : 'An error occurred',
       }]);
     } finally {
       setIsLoading(false);
@@ -133,7 +138,7 @@ export function SetupApp({
 
   const finishSetup = useCallback(async (history: Array<{ role: 'user' | 'assistant'; content: string }>) => {
     setPhase('extracting');
-    const extractTaskId = addTask('프로젝트 정보 추출 중...', 'in_progress');
+    const extractTaskId = addTask('Extracting project info...', 'in_progress');
 
     try {
       const result = await onExtract(history);
@@ -142,11 +147,11 @@ export function SetupApp({
       setMessages((prev) => [...prev, {
         id: Date.now().toString(),
         role: 'assistant',
-        content: `프로젝트 추출 완료: ${result.name}`,
+        content: `Project extracted: ${result.name}`,
       }]);
 
       setPhase('generating');
-      const genTaskId = addTask('파일 생성 중...', 'in_progress');
+      const genTaskId = addTask('Generating files...', 'in_progress');
 
       await onComplete(history);
       updateTask(genTaskId, 'completed');
@@ -155,7 +160,7 @@ export function SetupApp({
       setMessages((prev) => [...prev, {
         id: Date.now().toString(),
         role: 'assistant',
-        content: '프로젝트 셋업 완료! 이제 개발을 시작하세요.',
+        content: 'Project setup complete! Ready to start development.',
       }]);
 
       // Auto exit after short delay
@@ -165,11 +170,65 @@ export function SetupApp({
       setMessages((prev) => [...prev, {
         id: Date.now().toString(),
         role: 'system',
-        content: error instanceof Error ? error.message : '추출 중 오류가 발생했습니다',
+        content: error instanceof Error ? error.message : 'Error during extraction',
       }]);
       setPhase('interview');
     }
   }, [onExtract, onComplete, addTask, updateTask, handleExit]);
+
+  // Process initialInput when provided (skip skill selection, start expert interview)
+  useEffect(() => {
+    if (initialInput && !initialInputProcessed && phase === 'interview') {
+      setInitialInputProcessed(true);
+      processInitialInput(initialInput);
+    }
+  }, [initialInput, initialInputProcessed, phase]);
+
+  const processInitialInput = useCallback(async (projectDescription: string) => {
+    // Show the initial input as user message
+    setMessages([{
+      id: '0',
+      role: 'user',
+      content: projectDescription,
+    }]);
+
+    const newHistory = [{ role: 'user' as const, content: projectDescription }];
+    setConversationHistory(newHistory);
+
+    setIsLoading(true);
+    const taskId = addTask('Analyzing project description...', 'in_progress');
+
+    try {
+      // Send to interview API - it will determine if info is sufficient
+      const response = await onInterview(newHistory, 'expert');
+      updateTask(taskId, 'completed');
+      setTimeout(() => removeTask(taskId), 500);
+
+      const updatedHistory = [...newHistory, { role: 'assistant' as const, content: response.message }];
+      setConversationHistory(updatedHistory);
+
+      setMessages((prev) => [...prev, {
+        id: Date.now().toString(),
+        role: 'assistant',
+        content: response.message,
+      }]);
+
+      if (response.readyToGenerate) {
+        // Initial input was sufficient - proceed to setup
+        await finishSetup(updatedHistory);
+      }
+      // Otherwise, interview continues normally
+    } catch (error) {
+      updateTask(taskId, 'failed');
+      setMessages((prev) => [...prev, {
+        id: Date.now().toString(),
+        role: 'system',
+        content: error instanceof Error ? error.message : 'Error processing input',
+      }]);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [onInterview, addTask, updateTask, removeTask, finishSetup]);
 
   const handleSubmit = useCallback(async (value: string) => {
     const trimmed = value.trim();
@@ -217,7 +276,7 @@ export function SetupApp({
       setMessages((prev) => [...prev, {
         id: Date.now().toString(),
         role: 'system',
-        content: error instanceof Error ? error.message : '오류가 발생했습니다',
+        content: error instanceof Error ? error.message : 'An error occurred',
       }]);
     } finally {
       setIsLoading(false);

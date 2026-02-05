@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, type Instance } from 'ink';
+import { render } from 'ink';
 import { App } from './App.js';
 import type { Task, Message } from './types.js';
 
@@ -34,6 +34,8 @@ interface SessionOptions {
   welcomeMessage?: string;
   initialTasks?: Task[];
   initialCreditInfo?: CreditInfo;
+  /** Pre-populate conversation with initial messages (e.g., from FSD setup flow) */
+  initialMessages?: Array<{ id: string; role: 'user' | 'assistant'; content: string }>;
   onSubmit: (input: string, conversationHistory: ConversationMessage[], lastClaudeOutput?: string) => Promise<{ type: 'prompt' | 'clarification'; content: string }>;
   onExecute: (prompt: string, onStreamEvent: (event: StreamEvent) => void) => Promise<void>;
   onCompact?: (messages: ConversationMessage[]) => Promise<CompactResult>;
@@ -46,7 +48,10 @@ interface SessionOptions {
 export async function startInkSession(options: SessionOptions): Promise<void> {
   // Shared state between Ink renders
   let messages: Message[] = [];
-  if (options.welcomeMessage) {
+  if (options.initialMessages && options.initialMessages.length > 0) {
+    // Use provided initial messages (e.g., from FSD setup flow)
+    messages = options.initialMessages;
+  } else if (options.welcomeMessage) {
     messages = [{
       id: '0',
       role: 'assistant' as const,

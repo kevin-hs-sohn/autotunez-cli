@@ -684,8 +684,14 @@ export function App({
         <Text color="gray" dimColor>
           {isLoading
             ? 'Press ESC to interrupt. Type to queue more inputs.'
-            : 'Commands: exit, clear, learn, /fsd <goal>'}
+            : 'exit | clear | learn | '}
         </Text>
+        {!isLoading && (
+          <Text color="cyan" dimColor>/fsd &lt;goal&gt;</Text>
+        )}
+        {!isLoading && (
+          <Text color="gray" dimColor> for autonomous mode</Text>
+        )}
       </Box>
     </Box>
   );

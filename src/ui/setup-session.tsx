@@ -13,6 +13,8 @@ interface SetupSessionOptions {
   onComplete: (
     messages: Array<{ role: 'user' | 'assistant'; content: string }>
   ) => Promise<void>;
+  /** Initial project description to start interview with (skips skill selection) */
+  initialInput?: string;
 }
 
 export async function startSetupSession(options: SetupSessionOptions): Promise<boolean> {
@@ -30,6 +32,7 @@ export async function startSetupSession(options: SetupSessionOptions): Promise<b
       onInterview={options.onInterview}
       onExtract={options.onExtract}
       onComplete={wrappedOnComplete}
+      initialInput={options.initialInput}
       onExit={() => {
         if (instance) {
           instance.unmount();

@@ -58,8 +58,8 @@ export function FSDApp({
   onExecute,
   onComplete,
   onAbort,
-  checkpoint = false,
-  skipQa = false,
+  checkpoint: _checkpoint = false,
+  skipQa: _skipQa = false,
   vibesafuActive,
 }: FSDAppProps) {
   const { exit } = useApp();

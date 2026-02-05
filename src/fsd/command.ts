@@ -35,7 +35,7 @@ import {
   getResumeInfo,
 } from './state.js';
 import { getVibesafuStatus } from '../vibesafu.js';
-import { needsSetup, getMissingFiles } from '../setup.js';
+import { needsSetup, getMissingFiles, runSetup } from '../setup.js';
 import { executeWithClaudeCode } from '../executor.js';
 import { ConsoleOutputHandler, type FSDOutputHandler } from './output-handler.js';
 import { InkOutputHandler } from './ink-output-handler.js';
@@ -92,14 +92,32 @@ export async function runFSDMode(goal: string | undefined, options: FSDOptions =
   // Check project setup BEFORE Ink initialization (to avoid stdin conflicts)
   if (needsSetup(cwd)) {
     const missing = getMissingFiles(cwd);
-    console.log(chalk.yellow(`\n⚠ 프로젝트 셋업이 필요합니다.`));
-    console.log(chalk.gray(`  누락된 파일: ${missing.join(', ')}\n`));
-    console.log(chalk.white(`FSD 모드는 CLAUDE.md가 필요합니다.`));
-    console.log(chalk.white(`먼저 interactive mode에서 프로젝트 셋업을 완료해주세요:\n`));
-    console.log(chalk.cyan(`  autotunez start\n`));
-    console.log(chalk.gray(`셋업 완료 후 다시 FSD 모드를 실행하세요:`));
-    console.log(chalk.cyan(`  autotunez fsd "${goal || 'your goal'}"\n`));
-    process.exit(1);
+    console.log(chalk.yellow(`\n⚠ Project setup required.`));
+    console.log(chalk.gray(`  Missing: ${missing.join(', ')}\n`));
+    console.log(chalk.white(`Starting setup interview...`));
+    if (goal) {
+      console.log(chalk.gray(`Using "${goal.slice(0, 50)}${goal.length > 50 ? '...' : ''}" as project description.\n`));
+    }
+
+    // Run setup with goal as initial input (if provided)
+    const setupSuccess = await runSetup('', cwd, goal);
+
+    if (!setupSuccess) {
+      console.log(chalk.red('\nSetup was not completed. Please try again.'));
+      process.exit(1);
+    }
+
+    console.log(chalk.green('\n✓ Project setup complete!'));
+
+    // After setup, continue to FSD mode if goal was provided
+    if (goal) {
+      console.log(chalk.cyan(`\nContinuing to FSD mode with goal: "${goal.slice(0, 50)}${goal.length > 50 ? '...' : ''}"\n`));
+      // Re-run FSD mode now that setup is complete
+      // Don't return - fall through to continue with FSD execution
+    } else {
+      console.log(chalk.gray('\nRun `autotunez fsd "<your goal>"` to start FSD mode.\n'));
+      return;
+    }
   }
 
   // Initialize Ink UI by default (disable with --no-ink)
