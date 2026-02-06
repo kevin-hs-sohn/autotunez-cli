@@ -175,7 +175,8 @@ export async function executeClaudeCode(
 ): Promise<{ success: boolean; output: string; sessionId?: string }> {
   return new Promise((resolve) => {
     // stdin is inherited so user can approve permission requests (vibesafu hooks)
-    const args = ['-p', '--output-format', 'stream-json', prompt];
+    // --verbose is required when using -p with --output-format=stream-json
+    const args = ['-p', '--verbose', '--output-format', 'stream-json', prompt];
     if (resumeSessionId) {
       args.push('--resume', resumeSessionId);
     }
@@ -261,8 +262,10 @@ export async function executeClaudeCodeSecure(
   return new Promise((resolve) => {
     // Run Claude Code with stream-json for session ID tracking
     // stdin is inherited so user can approve permission requests (vibesafu hooks)
+    // --verbose is required when using -p with --output-format=stream-json
     const args = [
       '-p',
+      '--verbose',
       '--output-format', 'stream-json',
       prompt,
     ];
