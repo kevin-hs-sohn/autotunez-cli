@@ -1,6 +1,6 @@
 {
   "name": "autotunez",
-  "version": "0.5.31",
+  "version": "0.5.32",
   "description": "CLI for vibe coding with Claude - transform messy prompts into optimized Claude Code instructions",
   "type": "module",
   "bin": {
