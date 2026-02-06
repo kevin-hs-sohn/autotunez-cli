@@ -391,7 +391,7 @@ export async function runAutomatedChecks(
       const [cmd, ...args] = command.split(' ');
       const proc = spawn(cmd, args, {
         cwd: projectPath,
-        stdio: ['pipe', 'pipe', 'pipe'],
+        stdio: ['ignore', 'pipe', 'pipe'],
         shell: true,
       });
 
