@@ -174,14 +174,15 @@ export async function executeClaudeCode(
   resumeSessionId?: string
 ): Promise<{ success: boolean; output: string; sessionId?: string }> {
   return new Promise((resolve) => {
-    const args = ['--print', '--output-format', 'stream-json', '-p', prompt];
+    // stdin is inherited so user can approve permission requests (vibesafu hooks)
+    const args = ['-p', '--output-format', 'stream-json', prompt];
     if (resumeSessionId) {
       args.push('--resume', resumeSessionId);
     }
 
     const claude = spawn('claude', args, {
       cwd,
-      stdio: ['pipe', 'pipe', 'pipe'],
+      stdio: ['inherit', 'pipe', 'pipe'],
       env: { ...process.env, FORCE_COLOR: '0' },
     });
 
@@ -259,14 +260,19 @@ export async function executeClaudeCodeSecure(
 
   return new Promise((resolve) => {
     // Run Claude Code with stream-json for session ID tracking
-    const args = ['--print', '--output-format', 'stream-json', '-p', prompt];
+    // stdin is inherited so user can approve permission requests (vibesafu hooks)
+    const args = [
+      '-p',
+      '--output-format', 'stream-json',
+      prompt,
+    ];
     if (resumeSessionId) {
       args.push('--resume', resumeSessionId);
     }
 
     const claude = spawn('claude', args, {
       cwd,
-      stdio: ['pipe', 'pipe', 'pipe'],
+      stdio: ['inherit', 'pipe', 'pipe'],
       env: { ...process.env, FORCE_COLOR: '0' },
     });
 
