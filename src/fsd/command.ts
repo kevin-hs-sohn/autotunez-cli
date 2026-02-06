@@ -39,6 +39,7 @@ import { needsSetup, getMissingFiles, runSetup } from '../setup.js';
 import { executeWithClaudeCode } from '../executor.js';
 import { ConsoleOutputHandler, type FSDOutputHandler } from './output-handler.js';
 import { InkOutputHandler } from './ink-output-handler.js';
+import { fsdPauseController } from './pause-controller.js';
 
 const MAX_QA_FIX_ATTEMPTS = 3;
 
@@ -172,12 +173,17 @@ export async function runFSDMode(goal: string | undefined, options: FSDOptions =
 
   if (options.ink !== false && goal) {
     inkHandler = new InkOutputHandler();
+    // Reset pause controller for new session
+    fsdPauseController.reset();
+
     await inkHandler.initialize(goal, maxCost, {
       onPause: () => {
+        fsdPauseController.pause();
         output.output('\n⏸ FSD Paused. You can now interact with Claude Code directly.\n');
         output.output('  Type a command and press Enter, or just press Enter to resume FSD.\n');
       },
       onResume: () => {
+        fsdPauseController.resume();
         output.output('\n▶ Resuming FSD...\n');
       },
       onUserInput: handleUserInput,
@@ -420,6 +426,9 @@ async function executePlan(
 
   // Execute milestones
   for (const milestone of plan.milestones) {
+    // Wait if paused (user pressed ESC)
+    await fsdPauseController.waitIfPaused();
+
     // Check abort signal
     if (options.abortSignal?.aborted) {
       console.log(chalk.yellow('\nFSD interrupted by user.'));
@@ -457,6 +466,9 @@ async function executePlan(
       milestone.status = 'completed';
       state.completedMilestones.push(milestone.id);
 
+      // Wait if paused before QA
+      await fsdPauseController.waitIfPaused();
+
       // Run QA if not skipped
       if (!options.skipQa) {
         output.qaStart(milestone.id);
@@ -477,6 +489,9 @@ async function executePlan(
 
       // Save state after successful completion
       await saveFSDState(cwd, goal, plan, state, config, gitState);
+
+      // Wait if paused before next milestone
+      await fsdPauseController.waitIfPaused();
 
       // Checkpoint if enabled
       if (options.checkpoint) {
