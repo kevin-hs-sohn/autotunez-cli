@@ -391,8 +391,9 @@ export async function runAutomatedChecks(
       const [cmd, ...args] = command.split(' ');
       const proc = spawn(cmd, args, {
         cwd: projectPath,
-        stdio: ['pipe', 'pipe', 'pipe'],
+        stdio: ['ignore', 'pipe', 'pipe'],
         shell: true,
+        env: { ...process.env, CI: 'true' }, // CI=true makes vitest/jest run without watch mode
       });
 
       let output = '';
