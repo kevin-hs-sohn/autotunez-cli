@@ -260,14 +260,12 @@ export async function runFSDMode(goal: string | undefined, options: FSDOptions =
 
   if (fs.existsSync(claudeMdPath)) {
     claudeMd = fs.readFileSync(claudeMdPath, 'utf-8');
-    console.log(chalk.green('Found CLAUDE.md'));
+    output.output('Found CLAUDE.md\n');
   }
   if (fs.existsSync(scratchpadPath)) {
     scratchpad = fs.readFileSync(scratchpadPath, 'utf-8');
-    console.log(chalk.green('Found SCRATCHPAD.md'));
+    output.output('Found SCRATCHPAD.md\n');
   }
-
-  console.log();
 
   // --- PLANNING PHASE ---
   output.start(goal);
@@ -352,7 +350,7 @@ async function resumeFSDSession(
   if (gitState) {
     const currentBranch = await getCurrentBranch(cwd);
     if (currentBranch !== gitState.fsdBranch) {
-      console.log(chalk.yellow(`Switching to FSD branch: ${gitState.fsdBranch}`));
+      output.output(`Switching to FSD branch: ${gitState.fsdBranch}\n`);
     }
   }
 
@@ -385,7 +383,7 @@ async function executePlan(
   }
 
   // --- EXECUTION PHASE ---
-  console.log(chalk.bold.cyan('\nFSD Mode - Executing\n'));
+  output.output('\nFSD Mode - Executing\n\n');
 
   const config = existingConfig ?? createDefaultConfig({
     maxCost,
@@ -431,7 +429,7 @@ async function executePlan(
 
     // Check abort signal
     if (options.abortSignal?.aborted) {
-      console.log(chalk.yellow('\nFSD interrupted by user.'));
+      output.output('\nFSD interrupted by user.\n');
       break;
     }
 
@@ -479,7 +477,7 @@ async function executePlan(
           const cont = await output.confirm('Continue to next milestone anyway?');
           if (!cont) {
             await saveFSDState(cwd, goal, plan, state, config, gitState);
-            console.log(chalk.gray('State saved. Run with --resume to continue.'));
+            output.output('State saved. Run with --resume to continue.\n');
             process.exit(0);
           }
         } else {
@@ -497,7 +495,7 @@ async function executePlan(
       if (options.checkpoint) {
         const cont = await output.confirm('Continue to next milestone?');
         if (!cont) {
-          console.log(chalk.gray('State saved. Run with --resume to continue.'));
+          output.output('State saved. Run with --resume to continue.\n');
           process.exit(0);
         }
       }
@@ -508,12 +506,12 @@ async function executePlan(
 
       const cont = await output.confirm('Continue to next milestone?');
       if (!cont) {
-        console.log(chalk.gray('State saved. Run with --resume to continue.'));
+        output.output('State saved. Run with --resume to continue.\n');
         process.exit(0);
       }
     } else if (result.status === 'needs_replan') {
       output.milestoneFailed(milestone.id, milestone.title + ' (max retries)');
-      console.log(chalk.gray('Consider re-planning or manual intervention.'));
+      output.output('Consider re-planning or manual intervention.\n');
       milestone.status = 'failed';
       await saveFSDState(cwd, goal, plan, state, config, gitState);
 
@@ -567,7 +565,7 @@ async function runQAWithFixLoop(
 
   while (attempts < MAX_QA_FIX_ATTEMPTS) {
     attempts++;
-    console.log(chalk.gray(`Running QA (attempt ${attempts}/${MAX_QA_FIX_ATTEMPTS})...`));
+    output.output(`Running QA (attempt ${attempts}/${MAX_QA_FIX_ATTEMPTS})...\n`);
     ctx.state.mode = 'reviewing';
 
     const qaResult = await spawnQAAgent(
@@ -577,7 +575,7 @@ async function runQAWithFixLoop(
     );
 
     const reportPath = await saveQAReport(qaResult, milestone, cwd);
-    console.log(chalk.gray('QA report saved: ' + reportPath));
+    output.output('QA report saved: ' + reportPath + '\n');
 
     lastQAResult = qaResult;
 
@@ -586,7 +584,7 @@ async function runQAWithFixLoop(
     }
 
     // Show issues
-    console.log(chalk.yellow('QA found issues:'));
+    output.output('QA found issues:\n');
     for (const issue of qaResult.issues) {
       output.qaIssue(issue.severity, issue.description);
     }
@@ -594,13 +592,13 @@ async function runQAWithFixLoop(
     // Check if there are critical issues worth fixing
     const criticalIssues = qaResult.issues.filter(i => i.severity === 'critical');
     if (criticalIssues.length === 0) {
-      console.log(chalk.gray('No critical issues - continuing.'));
+      output.output('No critical issues - continuing.\n');
       return qaResult;
     }
 
     // Don't fix on last attempt
     if (attempts >= MAX_QA_FIX_ATTEMPTS) {
-      console.log(chalk.red('Max QA fix attempts reached.'));
+      output.error('Max QA fix attempts reached.');
       break;
     }
 
@@ -611,7 +609,7 @@ async function runQAWithFixLoop(
     }
 
     // Generate and execute fix prompt with security monitoring
-    console.log(chalk.gray('Attempting to fix QA issues...'));
+    output.output('Attempting to fix QA issues...\n');
     const fixPrompt = generateQAFixPrompt(
       milestone,
       qaResult.issues,
@@ -626,11 +624,11 @@ async function runQAWithFixLoop(
       },
       onSecurityEvent: (event) => {
         if (event.type === 'blocked') {
-          console.log(chalk.red(`\n🚫 ${event.message}`));
+          output.error(`🚫 ${event.message}`);
         } else if (event.type === 'warning') {
-          console.log(chalk.yellow(`\n⚠️  ${event.message}`));
+          output.output(`⚠️  ${event.message}\n`);
         } else if (event.type === 'checkpoint') {
-          console.log(chalk.cyan(`\n🔍 ${event.message}`));
+          output.output(`🔍 ${event.message}\n`);
         }
       },
     });
@@ -639,9 +637,9 @@ async function runQAWithFixLoop(
     ctx.state.totalCost = ctx.state.totalPrompts * 0.10;
 
     if (!fixResult.success) {
-      console.log(chalk.red('Fix attempt failed.'));
+      output.error('Fix attempt failed.');
       if (fixResult.securityEvents.some(e => e.type === 'blocked')) {
-        console.log(chalk.red('Blocked by security guard.'));
+        output.error('Blocked by security guard.');
       }
     }
   }
