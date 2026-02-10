@@ -409,7 +409,7 @@ program
       if (doSetup) {
         let setupSuccess = false;
         while (!setupSuccess) {
-          setupSuccess = await runSetup('', cwd); // apiKey no longer needed
+          setupSuccess = await runSetup(cwd);
           if (!setupSuccess) {
             console.log(chalk.red('셋업이 완료되지 않았습니다.'));
             const retryRl = readline.createInterface({
@@ -504,7 +504,7 @@ program
         if (projectContext) {
           const spinner = ora('Thinking...').start();
           try {
-            const result = await transformPrompt('', trimmed, projectContext, {
+            const result = await transformPrompt(trimmed, projectContext, {
               claudeMd: projectContext,
               scratchpad: scratchpadContent,
               plan: planContent,
@@ -579,7 +579,7 @@ Just describe what you want to build in plain language.`;
         onSubmit: async (input: string, conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }>, lastClaudeOutput?: string) => {
           // Always use conversation history for context-aware transformation
           // Include lastClaudeOutput so autotunez understands confirmation responses like "go ahead"
-          const result = await transformPrompt('', input, projectContext, {
+          const result = await transformPrompt(input, projectContext, {
             claudeMd: projectContext,
             scratchpad: scratchpadContent,
             plan: planContent,
@@ -836,14 +836,14 @@ Just describe what you want to build in plain language.`;
 
         if (messages.length === 1 && projectContext) {
           // First message with context
-          result = await transformPrompt('', trimmed, projectContext, {
+          result = await transformPrompt(trimmed, projectContext, {
             claudeMd: projectContext,
             scratchpad: scratchpadContent,
             plan: planContent,
           });
         } else {
           // Continuing conversation — structured response with prompt detection
-          result = await chatStructured('', messages);
+          result = await chatStructured(messages);
         }
 
         spinner.stop();

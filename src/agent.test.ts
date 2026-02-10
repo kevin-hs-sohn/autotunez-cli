@@ -17,7 +17,6 @@ const mockTransform = vi.fn();
 
 vi.mock('./api-client.js', () => ({
   ApiClient: class MockApiClient {
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     constructor(_opts: unknown) {}
     transform = mockTransform;
   },
@@ -52,7 +51,7 @@ describe('agent', () => {
       mockGetAutotunezKey.mockReturnValue(undefined);
 
       await expect(
-        transformPrompt('unused', 'add login')
+        transformPrompt('add login')
       ).rejects.toThrow(ApiKeyRequiredError);
     });
 
@@ -61,7 +60,7 @@ describe('agent', () => {
       mockGetAutotunezKey.mockReturnValue(testAutotunezKey);
 
       await expect(
-        transformPrompt('unused', 'add login')
+        transformPrompt('add login')
       ).rejects.toThrow(ApiKeyRequiredError);
     });
 
@@ -74,11 +73,11 @@ describe('agent', () => {
         content: 'Refined prompt from server',
       });
 
-      const result = await transformPrompt('unused', 'add login');
+      const result = await transformPrompt('add login');
 
       expect(result.type).toBe('prompt');
       expect(result.content).toBe('Refined prompt from server');
-      expect(mockTransform).toHaveBeenCalledWith('add login', '', undefined, undefined, undefined);
+      expect(mockTransform).toHaveBeenCalledWith('add login', '');
     });
 
     it('should pass context to ApiClient transform', async () => {
@@ -91,7 +90,6 @@ describe('agent', () => {
       });
 
       const result = await transformPrompt(
-        'unused',
         'add login',
         '# CLAUDE.md context'
       );
@@ -99,10 +97,7 @@ describe('agent', () => {
       expect(result.type).toBe('clarification');
       expect(mockTransform).toHaveBeenCalledWith(
         'add login',
-        '# CLAUDE.md context',
-        undefined,
-        undefined,
-        undefined
+        '# CLAUDE.md context'
       );
     });
 
@@ -115,12 +110,12 @@ describe('agent', () => {
         content: 'Clean prompt',
       });
 
-      await transformPrompt('unused', 'add feature');
+      await transformPrompt('add feature');
 
-      expect(mockTransform).toHaveBeenCalledWith('add feature', '', undefined, undefined, undefined);
+      expect(mockTransform).toHaveBeenCalledWith('add feature', '');
     });
 
-    it('should pass conversation history to ApiClient transform', async () => {
+    it('should pass conversation history via options to ApiClient transform', async () => {
       mockGetApiKey.mockReturnValue(testAnthropicKey);
       mockGetAutotunezKey.mockReturnValue(testAutotunezKey);
       mockGetServerUrl.mockReturnValue('http://localhost:3000');
@@ -135,10 +130,9 @@ describe('agent', () => {
       ];
 
       const result = await transformPrompt(
-        'unused',
         'do the thing',
         '# Project context',
-        history
+        { conversationHistory: history }
       );
 
       expect(result.type).toBe('prompt');
@@ -147,7 +141,8 @@ describe('agent', () => {
         '# Project context',
         undefined,
         undefined,
-        history
+        history,
+        undefined
       );
     });
   });
@@ -158,7 +153,7 @@ describe('agent', () => {
       mockGetAutotunezKey.mockReturnValue(undefined);
 
       await expect(
-        chatStructured('unused', [{ role: 'user', content: 'hi' }])
+        chatStructured([{ role: 'user', content: 'hi' }])
       ).rejects.toThrow(ApiKeyRequiredError);
     });
 
@@ -171,7 +166,7 @@ describe('agent', () => {
         content: 'Server-refined prompt',
       });
 
-      const result = await chatStructured('unused', [
+      const result = await chatStructured([
         { role: 'user', content: 'I want a todo app' },
         { role: 'assistant', content: 'What features?' },
         { role: 'user', content: 'Just basic CRUD' },
@@ -194,7 +189,7 @@ describe('agent', () => {
         content: 'What do you want?',
       });
 
-      const result = await chatStructured('unused', []);
+      const result = await chatStructured([]);
 
       expect(result.type).toBe('clarification');
       expect(mockTransform).toHaveBeenCalledWith('', '', undefined, undefined, []);
@@ -209,7 +204,7 @@ describe('agent', () => {
         content: 'Can you be more specific?',
       });
 
-      const result = await chatStructured('unused', [
+      const result = await chatStructured([
         { role: 'user', content: 'make it better' },
       ]);
 
@@ -226,7 +221,7 @@ describe('agent', () => {
         content: 'Done',
       });
 
-      await chatStructured('unused', [
+      await chatStructured([
         { role: 'user', content: 'first message' },
         { role: 'assistant', content: 'response' },
         { role: 'user', content: 'second message' },

@@ -54,35 +54,27 @@ export interface TransformOptions {
 }
 
 export async function transformPrompt(
-  _apiKey: string, // Kept for backward compatibility
   userInput: string,
   context?: string,
-  conversationHistoryOrOptions?: Array<{ role: 'user' | 'assistant'; content: string }> | TransformOptions
+  options?: TransformOptions
 ): Promise<AgentResponse> {
   const apiClient = getApiClient();
 
-  // Handle both old and new call signatures
-  if (Array.isArray(conversationHistoryOrOptions)) {
-    // Old signature: transformPrompt(apiKey, input, claudeMd, conversationHistory)
-    return apiClient.transform(userInput, context || '', undefined, undefined, conversationHistoryOrOptions);
-  } else if (conversationHistoryOrOptions) {
-    // New signature: transformPrompt(apiKey, input, claudeMd, options)
-    const opts = conversationHistoryOrOptions;
+  if (options) {
     return apiClient.transform(
       userInput,
-      opts.claudeMd || context || '',
-      opts.scratchpad,
-      opts.plan,
-      opts.conversationHistory,
-      opts.lastClaudeOutput
+      options.claudeMd || context || '',
+      options.scratchpad,
+      options.plan,
+      options.conversationHistory,
+      options.lastClaudeOutput
     );
-  } else {
-    return apiClient.transform(userInput, context || '', undefined, undefined, undefined);
   }
+
+  return apiClient.transform(userInput, context || '');
 }
 
 export async function chatStructured(
-  _apiKey: string, // Kept for backward compatibility
   messages: Array<{ role: 'user' | 'assistant'; content: string }>
 ): Promise<AgentResponse> {
   const apiClient = getApiClient();
