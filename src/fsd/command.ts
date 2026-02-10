@@ -101,7 +101,7 @@ export async function runFSDMode(goal: string | undefined, options: FSDOptions =
     }
 
     // Run setup with goal as initial input (if provided)
-    const setupSuccess = await runSetup('', cwd, goal);
+    const setupSuccess = await runSetup(cwd, goal);
 
     if (!setupSuccess) {
       console.log(chalk.red('\nSetup was not completed. Please try again.'));

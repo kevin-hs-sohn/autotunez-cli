@@ -82,7 +82,7 @@ export function getMissingFiles(cwd: string): string[] {
  *
  * @param initialInput - Optional project description (e.g., from FSD goal). Skips skill selection if provided.
  */
-export async function runSetup(_apiKey: string, cwd: string, initialInput?: string): Promise<boolean> {
+export async function runSetup(cwd: string, initialInput?: string): Promise<boolean> {
   // Check API keys
   const anthropicKey = getApiKey();
   const autotunezKey = getAutotunezKey();
