@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { config as loadDotenv } from 'dotenv';
+import type { ModelTier } from './api-types.js';
 
 const CONFIG_DIR = path.join(os.homedir(), '.autotunez');
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
@@ -14,6 +15,7 @@ interface Config {
   autotunezKey?: string;  // autotunez API key (atk_xxx) - for usage tracking
   serverUrl?: string;
   hasSeenWelcome?: boolean;
+  modelPreference?: ModelTier;  // User's preferred model tier
 }
 
 export function loadConfig(): Config {
@@ -111,5 +113,22 @@ export function hasSeenWelcome(): boolean {
 export function markWelcomeSeen(): void {
   const config = loadConfig();
   config.hasSeenWelcome = true;
+  saveConfig(config);
+}
+
+const VALID_MODEL_PREFERENCES: ModelTier[] = ['auto', 'haiku', 'sonnet', 'opus'];
+
+export function validateModelPreference(value: string): value is ModelTier {
+  return VALID_MODEL_PREFERENCES.includes(value as ModelTier);
+}
+
+export function getModelPreference(): ModelTier {
+  const config = loadConfig();
+  return config.modelPreference || 'auto';
+}
+
+export function setModelPreference(tier: ModelTier): void {
+  const config = loadConfig();
+  config.modelPreference = tier;
   saveConfig(config);
 }

@@ -129,6 +129,35 @@ describe('config', () => {
     });
   });
 
+  describe('getModelPreference / setModelPreference / validateModelPreference', () => {
+    it('should return "auto" when no model preference is set', async () => {
+      const { getModelPreference } = await import('./config');
+      expect(getModelPreference()).toBe('auto');
+    });
+
+    it('should set and get model preference', async () => {
+      const { setModelPreference, getModelPreference } = await import('./config');
+      setModelPreference('haiku');
+      expect(getModelPreference()).toBe('haiku');
+    });
+
+    it('should accept all valid model tiers', async () => {
+      const { setModelPreference, getModelPreference, validateModelPreference } = await import('./config');
+      for (const tier of ['auto', 'haiku', 'sonnet', 'opus'] as const) {
+        expect(validateModelPreference(tier)).toBe(true);
+        setModelPreference(tier);
+        expect(getModelPreference()).toBe(tier);
+      }
+    });
+
+    it('should reject invalid model preferences', async () => {
+      const { validateModelPreference } = await import('./config');
+      expect(validateModelPreference('gpt4')).toBe(false);
+      expect(validateModelPreference('')).toBe(false);
+      expect(validateModelPreference('HAIKU')).toBe(false);
+    });
+  });
+
   describe('hasSeenWelcome / markWelcomeSeen', () => {
     it('should return false when welcome not seen', async () => {
       const { hasSeenWelcome } = await import('./config');

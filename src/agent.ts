@@ -1,5 +1,5 @@
 import { ApiClient } from './api-client.js';
-import { getApiKey, getAutotunezKey, getServerUrl } from './config.js';
+import { getApiKey, getAutotunezKey, getServerUrl, getModelPreference } from './config.js';
 
 export interface AgentResponse {
   type: 'clarification' | 'prompt';
@@ -36,10 +36,12 @@ function getApiClient(): ApiClient {
     throw new ApiKeyRequiredError('anthropic');
   }
 
+  const modelPreference = getModelPreference();
   return new ApiClient({
     autotunezKey,
     anthropicKey,
     serverUrl: getServerUrl(),
+    modelPreference: modelPreference !== 'auto' ? modelPreference : undefined,
   });
 }
 

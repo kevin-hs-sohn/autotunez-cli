@@ -3,7 +3,7 @@ import chalk from 'chalk';
 import * as fs from 'fs';
 import * as path from 'path';
 import { ApiClient } from '../api-client.js';
-import { getApiKey, getAutotunezKey } from '../config.js';
+import { getApiKey, getAutotunezKey, getModelPreference } from '../config.js';
 import {
   FSDPlanResponse,
   FSDQAResult,
@@ -273,7 +273,12 @@ export async function runFSDMode(goal: string | undefined, options: FSDOptions =
   output.start(goal);
   output.planningStart();
 
-  const apiClient = new ApiClient({ autotunezKey, anthropicKey });
+  const modelPref = getModelPreference();
+  const apiClient = new ApiClient({
+    autotunezKey,
+    anthropicKey,
+    modelPreference: modelPref !== 'auto' ? modelPref : undefined,
+  });
 
   let plan: FSDPlanResponse;
   try {
