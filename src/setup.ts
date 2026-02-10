@@ -13,6 +13,7 @@ import type { ProjectConfig } from './types.js';
 import { ApiClient } from './api-client.js';
 import { getApiKey, getAutotunezKey, getServerUrl } from './config.js';
 import { startSetupSession } from './ui/setup-session.js';
+import { installDefaultSkills } from './skill-installer.js';
 
 const REQUIRED_FILES = ['CLAUDE.md', 'SCRATCHPAD.md', 'plan.md'];
 
@@ -108,6 +109,7 @@ export async function runSetup(cwd: string, initialInput?: string): Promise<bool
   });
 
   let extractedConfig: ProjectConfig | null = null;
+  let skillResults: Array<{ name: string; success: boolean; error?: string }> = [];
 
   try {
     const success = await startSetupSession({
@@ -149,6 +151,11 @@ export async function runSetup(cwd: string, initialInput?: string): Promise<bool
           TECHDEBT_SKILL,
           'utf-8'
         );
+
+        // Install default Claude Code skills
+        console.log('');
+        console.log(chalk.gray('  Installing default skills...'));
+        skillResults = await installDefaultSkills(cwd);
       },
     });
 
@@ -158,6 +165,16 @@ export async function runSetup(cwd: string, initialInput?: string): Promise<bool
       console.log(chalk.green('  ✓ SCRATCHPAD.md'));
       console.log(chalk.green('  ✓ plan.md'));
       console.log(chalk.green('  ✓ .claude/commands/techdebt.md'));
+
+      const installed = skillResults.filter((r) => r.success);
+      const failed = skillResults.filter((r) => !r.success);
+      if (installed.length > 0) {
+        console.log(chalk.green(`  ✓ ${installed.length} skills installed`));
+      }
+      if (failed.length > 0) {
+        console.log(chalk.yellow(`  ⚠ ${failed.length} skills failed to install (non-blocking)`));
+      }
+
       console.log('');
       console.log(chalk.gray('  Tip: Run /techdebt in Claude Code to find technical debt'));
       console.log('');
