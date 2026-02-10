@@ -75,9 +75,6 @@ export function redactSecrets(text: string): string {
     // Environment variable values (when exposed)
     /\b([A-Z_]+_KEY|[A-Z_]+_SECRET|[A-Z_]+_TOKEN)=["']?([^"'\s]{8,})["']?/gi,
     /\b(password|passwd|pwd)\s*[=:]\s*["']?([^"'\s]{4,})["']?/gi,
-
-    // Generic long hex/base64 strings that look like secrets
-    /\b([a-f0-9]{32,64})\b/gi,  // MD5/SHA hashes or hex keys
   ];
 
   let result = text;
