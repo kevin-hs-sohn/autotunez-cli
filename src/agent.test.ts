@@ -9,6 +9,7 @@ vi.mock('./config.js', () => ({
   getApiKey: () => mockGetApiKey(),
   getAutotunezKey: () => mockGetAutotunezKey(),
   getServerUrl: () => mockGetServerUrl(),
+  getModelPreference: () => 'auto',
 }));
 
 // Mock ApiClient

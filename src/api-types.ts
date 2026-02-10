@@ -66,6 +66,7 @@ export interface TransformRequest {
 export interface TransformResponse {
   type: 'prompt' | 'clarification';
   content: string;
+  modelUsed?: string;
 }
 
 // --- Fix ---
@@ -105,6 +106,18 @@ export interface LearnResponse {
   rule: string; // Generated rule to add to CLAUDE.md
   category: 'always' | 'ask_first' | 'never';
   explanation: string;
+}
+
+// --- Settings ---
+
+export type ModelTier = 'auto' | 'haiku' | 'sonnet' | 'opus';
+
+export interface UserSettingsResponse {
+  modelPreference: ModelTier;
+}
+
+export interface UpdateSettingsRequest {
+  modelPreference?: ModelTier;
 }
 
 // --- Common ---

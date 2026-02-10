@@ -18,6 +18,9 @@ import {
   validateAutotunezKey,
   hasSeenWelcome,
   markWelcomeSeen,
+  getModelPreference,
+  setModelPreference,
+  validateModelPreference,
 } from './config.js';
 import { ApiClient } from './api-client.js';
 import { transformPrompt, chatStructured, compactConversation, learnFromConversation, ApiKeyRequiredError } from './agent.js';
@@ -53,6 +56,7 @@ program
   .option('--show', 'Show current configuration')
   .option('--clear', 'Clear stored API key')
   .option('--clear-autotunez-key', 'Clear stored autotunez API key')
+  .option('--model <tier>', 'Set model preference (auto|haiku|sonnet|opus)')
   .action(async (options) => {
     if (options.clear) {
       clearApiKey();
@@ -63,6 +67,30 @@ program
     if (options.clearAutotunezKey) {
       clearAutotunezKey();
       console.log(chalk.green('✓ autotunez API key cleared'));
+      return;
+    }
+
+    if (options.model) {
+      const tier = options.model;
+      if (!validateModelPreference(tier)) {
+        console.log(chalk.red(`\n✗ Invalid model tier: "${tier}"`));
+        console.log(chalk.gray('  Valid options: auto, haiku, sonnet, opus\n'));
+        console.log(chalk.gray('  auto   — Automatically select based on task complexity'));
+        console.log(chalk.gray('  haiku  — Fast and affordable'));
+        console.log(chalk.gray('  sonnet — Balanced quality and cost'));
+        console.log(chalk.gray('  opus   — Highest quality\n'));
+        return;
+      }
+      setModelPreference(tier);
+
+      const descriptions: Record<string, string> = {
+        auto: 'Automatically select based on task complexity',
+        haiku: 'Fast and affordable',
+        sonnet: 'Balanced quality and cost',
+        opus: 'Highest quality',
+      };
+      console.log(chalk.green(`\n✓ Model preference set to "${tier}"`));
+      console.log(chalk.gray(`  ${descriptions[tier]}\n`));
       return;
     }
 
@@ -93,6 +121,19 @@ program
         console.log(chalk.gray('○ autotunez API key not configured (optional)'));
         console.log(chalk.gray('  Get one at: https://autotunez.vercel.app/dashboard'));
       }
+
+      console.log();
+
+      const modelPref = getModelPreference();
+      const modelDescriptions: Record<string, string> = {
+        auto: 'Automatically select based on task complexity',
+        haiku: 'Fast and affordable',
+        sonnet: 'Balanced quality and cost',
+        opus: 'Highest quality',
+      };
+      console.log(chalk.green(`✓ Model preference: ${modelPref}`));
+      console.log(chalk.gray(`  ${modelDescriptions[modelPref]}`));
+      console.log(chalk.gray('  Change with: autotunez config --model <auto|haiku|sonnet|opus>'));
       return;
     }
 
@@ -174,6 +215,7 @@ program
     console.log(chalk.gray('Options:'));
     console.log(chalk.gray('  --set-key              Set your Anthropic API key'));
     console.log(chalk.gray('  --set-autotunez-key    Set your autotunez API key (for usage tracking)'));
+    console.log(chalk.gray('  --model <tier>         Set model preference (auto|haiku|sonnet|opus)'));
     console.log(chalk.gray('  --show                 Show current configuration'));
     console.log(chalk.gray('  --clear                Clear stored Anthropic API key'));
     console.log(chalk.gray('  --clear-autotunez-key  Clear stored autotunez API key\n'));

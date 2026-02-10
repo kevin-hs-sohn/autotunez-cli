@@ -152,6 +152,35 @@ describe('ApiClient', () => {
     ).rejects.toThrow('Network error');
   });
 
+  it('should include X-Model-Preference header when modelPreference is set', async () => {
+    const clientWithModel = new ApiClient({
+      serverUrl: 'http://localhost:3000',
+      autotunezKey: testAutotunezKey,
+      anthropicKey: testAnthropicKey,
+      modelPreference: 'haiku',
+    });
+
+    mockFetch.mockResolvedValue(
+      mockJsonResponse({ type: 'prompt', content: 'refined' })
+    );
+
+    await clientWithModel.transform('test input', '# CLAUDE.md');
+
+    const [, options] = mockFetch.mock.calls[0];
+    expect(options.headers['X-Model-Preference']).toBe('haiku');
+  });
+
+  it('should not include X-Model-Preference header when not set', async () => {
+    mockFetch.mockResolvedValue(
+      mockJsonResponse({ type: 'prompt', content: 'refined' })
+    );
+
+    await client.transform('test input', '# CLAUDE.md');
+
+    const [, options] = mockFetch.mock.calls[0];
+    expect(options.headers['X-Model-Preference']).toBeUndefined();
+  });
+
   it('should call correct path for compact', async () => {
     mockFetch.mockResolvedValue(
       mockJsonResponse({

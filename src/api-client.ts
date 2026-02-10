@@ -17,6 +17,7 @@ import type {
   LearnRequest,
   LearnResponse,
   ApiError,
+  ModelTier,
 } from './api-types.js';
 import type {
   ProjectConfig,
@@ -30,16 +31,19 @@ export class ApiClient {
   private baseUrl: string;
   private autotunezKey: string | undefined;
   private anthropicKey: string | undefined;
+  private modelPreference: ModelTier | undefined;
 
   constructor(options: {
     serverUrl?: string;
     apiKey?: string;  // Legacy: will be used as autotunezKey
     autotunezKey?: string;
     anthropicKey?: string;
+    modelPreference?: ModelTier;
   } = {}) {
     this.baseUrl = (options.serverUrl || DEFAULT_SERVER_URL).replace(/\/$/, '');
     this.autotunezKey = options.autotunezKey || options.apiKey;
     this.anthropicKey = options.anthropicKey;
+    this.modelPreference = options.modelPreference;
   }
 
   setApiKey(key: string): void {
@@ -73,6 +77,10 @@ export class ApiClient {
       'X-Autotunez-Key': this.autotunezKey,
       'X-API-Key': this.anthropicKey,
     };
+
+    if (this.modelPreference) {
+      headers['X-Model-Preference'] = this.modelPreference;
+    }
 
     const response = await fetch(`${this.baseUrl}${path}`, {
       method: 'POST',
