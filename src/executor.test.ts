@@ -1,24 +1,61 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { spawn } from 'child_process';
 import { EventEmitter } from 'events';
-import { executeWithClaudeCode, spawnInteractiveClaude } from './executor';
 
-// Mock child_process.spawn
+// ── Mocks ───────────────────────────────────────────────────────────────────
+
+const { mockExecute, mockSpawn, mockGetApiKey } = vi.hoisted(() => ({
+  mockExecute: vi.fn(),
+  mockSpawn: vi.fn(),
+  mockGetApiKey: vi.fn(),
+}));
+
+vi.mock('./core/agent-executor.js', () => ({
+  execute: mockExecute,
+}));
+
 vi.mock('child_process', () => ({
-  spawn: vi.fn(),
+  spawn: mockSpawn,
 }));
 
-// Mock output-parser
-vi.mock('./output-parser.js', () => ({
-  parseStreamLine: vi.fn((line: string) => {
-    try {
-      return JSON.parse(line);
-    } catch {
-      return null;
-    }
-  }),
-  extractSessionId: vi.fn(() => undefined),
+vi.mock('./config.js', () => ({
+  getApiKey: mockGetApiKey,
 }));
+
+import {
+  executeWithClaudeCode,
+  spawnInteractiveClaude,
+  checkClaudeCodeInstalled,
+  checkClaudeCodeAuth,
+  runClaudeLogin,
+} from './executor';
+
+// ── Helpers ─────────────────────────────────────────────────────────────────
+
+function makeSuccessResult(overrides: Record<string, unknown> = {}) {
+  return {
+    success: true,
+    output: 'Task done.',
+    sessionId: 'sess-abc',
+    cost: { totalCostUsd: 0.05, inputTokens: 500, outputTokens: 250, modelUsage: {} },
+    numTurns: 3,
+    durationMs: 1200,
+    ...overrides,
+  };
+}
+
+function makeFailureResult(overrides: Record<string, unknown> = {}) {
+  return {
+    success: false,
+    output: '',
+    sessionId: 'sess-err',
+    cost: { totalCostUsd: 0.01, inputTokens: 100, outputTokens: 50, modelUsage: {} },
+    numTurns: 1,
+    durationMs: 500,
+    errors: ['Execution failed'],
+    ...overrides,
+  };
+}
 
 function createMockChild() {
   const stdout = new EventEmitter();
@@ -30,166 +67,136 @@ function createMockChild() {
   return child;
 }
 
+// ── Tests ───────────────────────────────────────────────────────────────────
+
 describe('executor', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
   describe('executeWithClaudeCode', () => {
-    it('should resolve with success when exit code is 0', async () => {
-      const mockChild = createMockChild();
-      vi.mocked(spawn).mockReturnValue(mockChild);
+    it('should call execute() with prompt and return success result', async () => {
+      mockExecute.mockResolvedValue(makeSuccessResult());
 
-      const promise = executeWithClaudeCode('test prompt');
+      const result = await executeWithClaudeCode('build a todo app');
 
-      process.nextTick(() => mockChild.emit('close', 0, null));
-
-      const result = await promise;
+      expect(mockExecute).toHaveBeenCalledWith('build a todo app', expect.objectContaining({}));
+      expect(result.success).toBe(true);
       expect(result.exitCode).toBe(0);
-      expect(result.success).toBe(true);
-      expect(result.output).toBe('');
+      expect(result.output).toBe('Task done.');
+      expect(result.sessionId).toBe('sess-abc');
     });
 
-    it('should resolve with failure when exit code is non-zero', async () => {
-      const mockChild = createMockChild();
-      vi.mocked(spawn).mockReturnValue(mockChild);
+    it('should return exitCode=1 on failure', async () => {
+      mockExecute.mockResolvedValue(makeFailureResult());
 
-      const promise = executeWithClaudeCode('test prompt');
+      const result = await executeWithClaudeCode('test');
 
-      process.nextTick(() => mockChild.emit('close', 1, null));
-
-      const result = await promise;
       expect(result.exitCode).toBe(1);
       expect(result.success).toBe(false);
+      expect(result.sessionId).toBe('sess-err');
     });
 
-    it('should handle SIGINT signal', async () => {
-      const mockChild = createMockChild();
-      vi.mocked(spawn).mockReturnValue(mockChild);
+    it('should pass cwd to execute()', async () => {
+      mockExecute.mockResolvedValue(makeSuccessResult());
 
-      const promise = executeWithClaudeCode('test prompt');
+      await executeWithClaudeCode('prompt', { cwd: '/custom/path' });
 
-      process.nextTick(() => mockChild.emit('close', null, 'SIGINT'));
-
-      const result = await promise;
-      expect(result.exitCode).toBe(130);
-      expect(result.success).toBe(false);
+      expect(mockExecute).toHaveBeenCalledWith('prompt', expect.objectContaining({
+        cwd: '/custom/path',
+      }));
     });
 
-    it('should handle SIGTERM signal', async () => {
-      const mockChild = createMockChild();
-      vi.mocked(spawn).mockReturnValue(mockChild);
+    it('should pass resumeSessionId to execute()', async () => {
+      mockExecute.mockResolvedValue(makeSuccessResult());
 
-      const promise = executeWithClaudeCode('test prompt');
+      await executeWithClaudeCode('prompt', { resumeSessionId: 'sess-old' });
 
-      process.nextTick(() => mockChild.emit('close', null, 'SIGTERM'));
-
-      const result = await promise;
-      expect(result.exitCode).toBe(143);
-      expect(result.success).toBe(false);
+      expect(mockExecute).toHaveBeenCalledWith('prompt', expect.objectContaining({
+        resumeSessionId: 'sess-old',
+      }));
     });
 
-    it('should reject with ENOENT error when claude is not found', async () => {
-      const mockChild = createMockChild();
-      vi.mocked(spawn).mockReturnValue(mockChild);
+    it('should pass abortSignal to execute()', async () => {
+      mockExecute.mockResolvedValue(makeSuccessResult());
+      const ac = new AbortController();
 
-      const promise = executeWithClaudeCode('test prompt');
+      await executeWithClaudeCode('prompt', { abortSignal: ac.signal });
 
-      const error = new Error('spawn claude ENOENT') as NodeJS.ErrnoException;
-      error.code = 'ENOENT';
-      process.nextTick(() => mockChild.emit('error', error));
-
-      await expect(promise).rejects.toThrow('Claude Code CLI not found');
+      expect(mockExecute).toHaveBeenCalledWith('prompt', expect.objectContaining({
+        abortSignal: ac.signal,
+      }));
     });
 
-    it('should reject with descriptive error for other spawn errors', async () => {
-      const mockChild = createMockChild();
-      vi.mocked(spawn).mockReturnValue(mockChild);
+    it('should convert timeoutMs to abortSignal', async () => {
+      mockExecute.mockResolvedValue(makeSuccessResult());
 
-      const promise = executeWithClaudeCode('test prompt');
+      await executeWithClaudeCode('prompt', { timeoutMs: 5000 });
 
-      const error = new Error('permission denied') as NodeJS.ErrnoException;
-      error.code = 'EACCES';
-      process.nextTick(() => mockChild.emit('error', error));
-
-      await expect(promise).rejects.toThrow('Failed to start Claude Code');
+      const callArgs = mockExecute.mock.calls[0];
+      expect(callArgs[1].abortSignal).toBeDefined();
     });
 
-    it('should spawn claude with correct default arguments (verbose, stream-json, skip-permissions)', () => {
-      const mockChild = createMockChild();
-      vi.mocked(spawn).mockReturnValue(mockChild);
+    it('should prefer explicit abortSignal over timeoutMs', async () => {
+      mockExecute.mockResolvedValue(makeSuccessResult());
+      const ac = new AbortController();
 
-      executeWithClaudeCode('my prompt here');
+      await executeWithClaudeCode('prompt', { timeoutMs: 5000, abortSignal: ac.signal });
 
-      expect(spawn).toHaveBeenCalledWith(
-        'claude',
-        ['-p', '--verbose', '--output-format', 'stream-json', '--dangerously-skip-permissions', 'my prompt here'],
-        expect.objectContaining({
-          cwd: process.cwd(),
-          stdio: ['ignore', 'pipe', 'pipe'],
-        }),
-      );
+      const callArgs = mockExecute.mock.calls[0];
+      expect(callArgs[1].abortSignal).toBe(ac.signal);
     });
 
-    it('should pass --resume when resumeSessionId is provided', () => {
-      const mockChild = createMockChild();
-      vi.mocked(spawn).mockReturnValue(mockChild);
+    it('should forward onStreamEvent to execute()', async () => {
+      mockExecute.mockResolvedValue(makeSuccessResult());
+      const onStreamEvent = vi.fn();
 
-      executeWithClaudeCode('prompt', { resumeSessionId: 'session-123' });
+      await executeWithClaudeCode('prompt', { onStreamEvent });
 
-      expect(spawn).toHaveBeenCalledWith(
-        'claude',
-        ['-p', '--verbose', '--output-format', 'stream-json', '--dangerously-skip-permissions', 'prompt', '--resume', 'session-123'],
-        expect.anything(),
-      );
+      const callArgs = mockExecute.mock.calls[0];
+      expect(callArgs[1].onStreamEvent).toBeDefined();
+      // Simulate a call to verify forwarding
+      callArgs[1].onStreamEvent({ type: 'text', content: 'hello' });
+      expect(onStreamEvent).toHaveBeenCalledWith({ type: 'text', content: 'hello' });
     });
 
-    it('should use custom cwd when provided', () => {
-      const mockChild = createMockChild();
-      vi.mocked(spawn).mockReturnValue(mockChild);
+    it('should handle execute() throwing an error', async () => {
+      mockExecute.mockRejectedValue(new Error('SDK error'));
 
-      executeWithClaudeCode('prompt', { cwd: '/custom/path' });
+      const result = await executeWithClaudeCode('prompt');
 
-      expect(spawn).toHaveBeenCalledWith(
-        'claude',
-        expect.anything(),
-        expect.objectContaining({ cwd: '/custom/path' }),
-      );
-    });
-
-    it('should handle stdout data (stream-json events)', async () => {
-      const mockChild = createMockChild();
-      vi.mocked(spawn).mockReturnValue(mockChild);
-
-      const promise = executeWithClaudeCode('prompt');
-
-      process.nextTick(() => {
-        const stdout = (mockChild as unknown as Record<string, EventEmitter>).stdout;
-        // Simulate stream-json event
-        stdout.emit('data', Buffer.from('{"type":"system","session_id":"test-123"}\n'));
-        mockChild.emit('close', 0, null);
-      });
-
-      const result = await promise;
-      expect(result.success).toBe(true);
-      expect(result.sessionId).toBe('test-123');
-    });
-
-    it('should handle stderr output', async () => {
-      const mockChild = createMockChild();
-      vi.mocked(spawn).mockReturnValue(mockChild);
-
-      const promise = executeWithClaudeCode('prompt');
-
-      process.nextTick(() => {
-        const stderr = (mockChild as unknown as Record<string, EventEmitter>).stderr;
-        stderr.emit('data', Buffer.from('error info'));
-        mockChild.emit('close', 1, null);
-      });
-
-      const result = await promise;
       expect(result.success).toBe(false);
       expect(result.exitCode).toBe(1);
+      expect(result.output).toBe('SDK error');
+    });
+
+    it('should return undefined sessionId when core returns empty string', async () => {
+      mockExecute.mockResolvedValue(makeSuccessResult({ sessionId: '' }));
+
+      const result = await executeWithClaudeCode('prompt');
+
+      expect(result.sessionId).toBeUndefined();
+    });
+
+    it('should inject BYOK API key as env when available', async () => {
+      mockGetApiKey.mockReturnValue('sk-ant-byok-key-for-testing');
+      mockExecute.mockResolvedValue(makeSuccessResult());
+
+      await executeWithClaudeCode('test prompt');
+
+      expect(mockExecute).toHaveBeenCalledWith('test prompt', expect.objectContaining({
+        env: { ANTHROPIC_API_KEY: 'sk-ant-byok-key-for-testing' },
+      }));
+    });
+
+    it('should not set env when no BYOK key is configured', async () => {
+      mockGetApiKey.mockReturnValue(undefined);
+      mockExecute.mockResolvedValue(makeSuccessResult());
+
+      await executeWithClaudeCode('test prompt');
+
+      const callArgs = mockExecute.mock.calls[0][1];
+      expect(callArgs.env).toBeUndefined();
     });
   });
 
@@ -197,11 +204,11 @@ describe('executor', () => {
     it('should spawn claude without -p flag (interactive mode)', () => {
       const mockChild = createMockChild();
       (mockChild as unknown as Record<string, unknown>).stdin = new EventEmitter();
-      vi.mocked(spawn).mockReturnValue(mockChild);
+      mockSpawn.mockReturnValue(mockChild);
 
       spawnInteractiveClaude();
 
-      expect(spawn).toHaveBeenCalledWith(
+      expect(mockSpawn).toHaveBeenCalledWith(
         'claude',
         [],
         expect.objectContaining({
@@ -215,7 +222,7 @@ describe('executor', () => {
       (mockStdin as unknown as Record<string, unknown>).write = vi.fn();
       const mockChild = createMockChild();
       (mockChild as unknown as Record<string, unknown>).stdin = mockStdin;
-      vi.mocked(spawn).mockReturnValue(mockChild);
+      mockSpawn.mockReturnValue(mockChild);
 
       const child = spawnInteractiveClaude();
 
@@ -226,11 +233,11 @@ describe('executor', () => {
     it('should use custom cwd when provided', () => {
       const mockChild = createMockChild();
       (mockChild as unknown as Record<string, unknown>).stdin = new EventEmitter();
-      vi.mocked(spawn).mockReturnValue(mockChild);
+      mockSpawn.mockReturnValue(mockChild);
 
       spawnInteractiveClaude({ cwd: '/my/project' });
 
-      expect(spawn).toHaveBeenCalledWith(
+      expect(mockSpawn).toHaveBeenCalledWith(
         'claude',
         [],
         expect.objectContaining({ cwd: '/my/project' }),
@@ -240,11 +247,11 @@ describe('executor', () => {
     it('should pass --resume when resumeSessionId is provided', () => {
       const mockChild = createMockChild();
       (mockChild as unknown as Record<string, unknown>).stdin = new EventEmitter();
-      vi.mocked(spawn).mockReturnValue(mockChild);
+      mockSpawn.mockReturnValue(mockChild);
 
       spawnInteractiveClaude({ resumeSessionId: 'abc-123' });
 
-      expect(spawn).toHaveBeenCalledWith(
+      expect(mockSpawn).toHaveBeenCalledWith(
         'claude',
         ['--resume', 'abc-123'],
         expect.anything(),
@@ -257,7 +264,7 @@ describe('executor', () => {
       (mockStdin as unknown as Record<string, unknown>).write = writeFn;
       const mockChild = createMockChild();
       (mockChild as unknown as Record<string, unknown>).stdin = mockStdin;
-      vi.mocked(spawn).mockReturnValue(mockChild);
+      mockSpawn.mockReturnValue(mockChild);
 
       const child = spawnInteractiveClaude();
       child.stdin?.write('test input\n');
@@ -267,117 +274,54 @@ describe('executor', () => {
   });
 
   describe('checkClaudeCodeInstalled', () => {
-    it('should return true when claude command exists', async () => {
-      const mockChild = createMockChild();
-      vi.mocked(spawn).mockReturnValue(mockChild);
-
-      const { checkClaudeCodeInstalled } = await import('./executor');
-      const promise = checkClaudeCodeInstalled();
-
-      process.nextTick(() => {
-        const stdout = (mockChild as unknown as Record<string, EventEmitter>).stdout;
-        stdout.emit('data', Buffer.from('1.0.0'));
-        mockChild.emit('close', 0, null);
-      });
-
-      const result = await promise;
+    it('should return installed=true (SDK is a dependency)', async () => {
+      const result = await checkClaudeCodeInstalled();
       expect(result.installed).toBe(true);
-      expect(result.version).toBe('1.0.0');
-    });
-
-    it('should return false when claude command not found (ENOENT)', async () => {
-      const mockChild = createMockChild();
-      vi.mocked(spawn).mockReturnValue(mockChild);
-
-      const { checkClaudeCodeInstalled } = await import('./executor');
-      const promise = checkClaudeCodeInstalled();
-
-      const error = new Error('spawn claude ENOENT') as NodeJS.ErrnoException;
-      error.code = 'ENOENT';
-      process.nextTick(() => mockChild.emit('error', error));
-
-      const result = await promise;
-      expect(result.installed).toBe(false);
-      expect(result.version).toBeUndefined();
-    });
-
-    it('should return false when claude exits with non-zero code', async () => {
-      const mockChild = createMockChild();
-      vi.mocked(spawn).mockReturnValue(mockChild);
-
-      const { checkClaudeCodeInstalled } = await import('./executor');
-      const promise = checkClaudeCodeInstalled();
-
-      process.nextTick(() => mockChild.emit('close', 1, null));
-
-      const result = await promise;
-      expect(result.installed).toBe(false);
     });
   });
 
   describe('checkClaudeCodeAuth', () => {
-    it('should return authenticated=true when test command succeeds', async () => {
-      const mockChild = createMockChild();
-      vi.mocked(spawn).mockReturnValue(mockChild);
+    const originalEnv = process.env;
 
-      const { checkClaudeCodeAuth } = await import('./executor');
-      const promise = checkClaudeCodeAuth();
+    beforeEach(() => {
+      process.env = { ...originalEnv };
+    });
 
-      process.nextTick(() => {
-        const stdout = (mockChild as unknown as Record<string, EventEmitter>).stdout;
-        stdout.emit('data', Buffer.from('Hello'));
-        mockChild.emit('close', 0, null);
-      });
+    afterEach(() => {
+      process.env = originalEnv;
+    });
 
-      const result = await promise;
+    it('should return authenticated=true when ANTHROPIC_API_KEY is set', async () => {
+      process.env.ANTHROPIC_API_KEY = 'sk-ant-test-key-12345678';
+
+      const result = await checkClaudeCodeAuth();
       expect(result.authenticated).toBe(true);
     });
 
-    it('should return authenticated=false when test command fails', async () => {
-      const mockChild = createMockChild();
-      vi.mocked(spawn).mockReturnValue(mockChild);
+    it('should return authenticated=false when ANTHROPIC_API_KEY is not set', async () => {
+      delete process.env.ANTHROPIC_API_KEY;
 
-      const { checkClaudeCodeAuth } = await import('./executor');
-      const promise = checkClaudeCodeAuth();
-
-      process.nextTick(() => {
-        const stderr = (mockChild as unknown as Record<string, EventEmitter>).stderr;
-        stderr.emit('data', Buffer.from('Not authenticated'));
-        mockChild.emit('close', 1, null);
-      });
-
-      const result = await promise;
+      const result = await checkClaudeCodeAuth();
       expect(result.authenticated).toBe(false);
-      expect(result.error).toContain('Not authenticated');
+      expect(result.error).toBeDefined();
     });
 
-    it('should return authenticated=false on ENOENT (claude not installed)', async () => {
-      const mockChild = createMockChild();
-      vi.mocked(spawn).mockReturnValue(mockChild);
+    it('should return authenticated=false when ANTHROPIC_API_KEY has wrong format', async () => {
+      process.env.ANTHROPIC_API_KEY = 'invalid-key';
 
-      const { checkClaudeCodeAuth } = await import('./executor');
-      const promise = checkClaudeCodeAuth();
-
-      const error = new Error('spawn claude ENOENT') as NodeJS.ErrnoException;
-      error.code = 'ENOENT';
-      process.nextTick(() => mockChild.emit('error', error));
-
-      const result = await promise;
+      const result = await checkClaudeCodeAuth();
       expect(result.authenticated).toBe(false);
-      expect(result.error).toContain('not installed');
     });
   });
 
   describe('runClaudeLogin', () => {
-    it('should spawn claude in interactive mode for login', async () => {
+    it('should spawn claude in interactive mode for login', () => {
       const mockChild = createMockChild();
-      (mockChild as unknown as Record<string, unknown>).stdin = new EventEmitter();
-      vi.mocked(spawn).mockReturnValue(mockChild);
+      mockSpawn.mockReturnValue(mockChild);
 
-      const { runClaudeLogin } = await import('./executor');
       runClaudeLogin();
 
-      expect(spawn).toHaveBeenCalledWith(
+      expect(mockSpawn).toHaveBeenCalledWith(
         'claude',
         [],
         expect.objectContaining({
@@ -388,11 +332,9 @@ describe('executor', () => {
 
     it('should resolve with success=true when login completes with exit 0', async () => {
       const mockChild = createMockChild();
-      vi.mocked(spawn).mockReturnValue(mockChild);
+      mockSpawn.mockReturnValue(mockChild);
 
-      const { runClaudeLogin } = await import('./executor');
       const promise = runClaudeLogin();
-
       process.nextTick(() => mockChild.emit('close', 0, null));
 
       const result = await promise;
@@ -401,11 +343,9 @@ describe('executor', () => {
 
     it('should resolve with success=false when login fails', async () => {
       const mockChild = createMockChild();
-      vi.mocked(spawn).mockReturnValue(mockChild);
+      mockSpawn.mockReturnValue(mockChild);
 
-      const { runClaudeLogin } = await import('./executor');
       const promise = runClaudeLogin();
-
       process.nextTick(() => mockChild.emit('close', 1, null));
 
       const result = await promise;
