@@ -321,7 +321,7 @@ export function App({
         setMessages((prev) => [...prev, {
           id: Date.now().toString(),
           role: 'system',
-          content: 'Usage: /fsd <goal>  (e.g., /fsd 로그인 기능 추가)',
+          content: 'Usage: /fsd <goal>  (e.g., /fsd add login feature)',
         }]);
         return;
       }

@@ -55,8 +55,8 @@
     "node": ">=18"
   },
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.39",
     "@inquirer/prompts": "^8.2.0",
-    "vibesafu": "^0.1.12",
     "chalk": "^5.6.2",
     "commander": "^14.0.2",
     "dotenv": "^17.2.3",
@@ -64,7 +64,8 @@
     "ink-spinner": "5.0.0",
     "ink-text-input": "5.0.1",
     "ora": "^9.1.0",
-    "react": "18.2.0"
+    "react": "18.2.0",
+    "vibesafu": "^0.1.12"
   },
   "devDependencies": {
     "@types/node": "^20.19.30",

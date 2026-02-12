@@ -251,7 +251,7 @@ export function SetupApp({
     setConversationHistory(newHistory);
 
     setIsLoading(true);
-    const taskId = addTask('생각 중...', 'in_progress');
+    const taskId = addTask('Thinking...', 'in_progress');
 
     try {
       const response = await onInterview(newHistory, skillLevel!);
@@ -288,25 +288,25 @@ export function SetupApp({
       {/* Header */}
       <Box paddingX={1} marginBottom={1}>
         <Text bold color="cyan">autotunez</Text>
-        <Text color="gray"> - 프로젝트 셋업</Text>
+        <Text color="gray"> - Project Setup</Text>
       </Box>
 
       {/* Skill Level Selection */}
       {phase === 'skill_select' && (
         <Box flexDirection="column" paddingX={1} marginBottom={1}>
-          <Text bold>어떤 모드로 진행할까요?</Text>
+          <Text bold>Choose your setup mode:</Text>
           <Box marginTop={1} flexDirection="column">
             <Text>
               <Text color="cyan" bold>1)</Text>
-              <Text> 입문자 — 처음부터 차근차근 (풀 인터뷰)</Text>
+              <Text> Beginner — Step-by-step guided interview</Text>
             </Text>
             <Text>
               <Text color="cyan" bold>2)</Text>
-              <Text> 숙련자 — 핵심만 빠르게 (tech stack + MVP만)</Text>
+              <Text> Expert — Quick setup (tech stack + MVP only)</Text>
             </Text>
           </Box>
           <Box marginTop={1}>
-            <Text color="gray">숫자를 눌러 선택하세요 (1 또는 2)</Text>
+            <Text color="gray">Press 1 or 2 to select</Text>
           </Box>
         </Box>
       )}
@@ -332,7 +332,7 @@ export function SetupApp({
           onChange={setInput}
           onSubmit={handleSubmit}
           disabled={isLoading}
-          placeholder="프로젝트에 대해 설명해주세요..."
+          placeholder="Describe your project..."
         />
       )}
 
@@ -340,8 +340,8 @@ export function SetupApp({
       <Box paddingX={1}>
         <Text color="gray" dimColor>
           {phase === 'skill_select'
-            ? '1 또는 2를 눌러 선택. Ctrl+C로 종료.'
-            : 'exit으로 종료. Ctrl+C로 강제 종료.'}
+            ? 'Press 1 or 2 to select. Ctrl+C to exit.'
+            : 'Type "exit" to quit. Ctrl+C to force exit.'}
         </Text>
       </Box>
     </Box>
