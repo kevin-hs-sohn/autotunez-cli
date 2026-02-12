@@ -1,4 +1,6 @@
 import { spawn } from 'child_process';
+import { execute } from '../core/agent-executor.js';
+import { getApiKey } from '../config.js';
 import {
   FSDMilestone,
   FSDExecutionState,
@@ -9,9 +11,6 @@ import {
   takeFileSnapshot,
   analyzePostExecution,
 } from './post-execution.js';
-
-// Cost estimation per prompt (conservative)
-const ESTIMATED_COST_PER_PROMPT = 0.10; // $0.10 per prompt
 
 export interface ExecutorContext {
   state: FSDExecutionState;
@@ -26,26 +25,27 @@ export interface ExecutorContext {
 }
 
 /**
- * Check if we're approaching cost limit
+ * Check if we're approaching cost limit.
+ * Uses state.totalCost directly (real SDK cost, not estimates).
  */
 export function checkCostLimit(state: FSDExecutionState, config: FSDConfig): {
   ok: boolean;
   message?: string;
 } {
-  const estimatedCost = state.totalPrompts * ESTIMATED_COST_PER_PROMPT;
+  const currentCost = state.totalCost;
   const warningThreshold = config.maxCost * 0.8;
 
-  if (estimatedCost >= config.maxCost) {
+  if (currentCost >= config.maxCost) {
     return {
       ok: false,
-      message: `Cost limit reached: ~$${estimatedCost.toFixed(2)} / $${config.maxCost} max`,
+      message: `Cost limit reached: ~$${currentCost.toFixed(2)} / $${config.maxCost} max`,
     };
   }
 
-  if (estimatedCost >= warningThreshold) {
+  if (currentCost >= warningThreshold) {
     return {
       ok: true,
-      message: `Warning: Approaching cost limit (~$${estimatedCost.toFixed(2)} / $${config.maxCost})`,
+      message: `Warning: Approaching cost limit (~$${currentCost.toFixed(2)} / $${config.maxCost})`,
     };
   }
 
@@ -162,214 +162,110 @@ export interface SecurityEvent {
 }
 
 /**
- * Execute a Claude Code prompt and return the output
+ * Execute a Claude Code prompt using the Agent SDK and return the output.
  */
 export async function executeClaudeCode(
   prompt: string,
   cwd: string,
   onOutput?: (chunk: string) => void,
   resumeSessionId?: string
-): Promise<{ success: boolean; output: string; sessionId?: string }> {
-  return new Promise((resolve) => {
-    // stdin is inherited so user can approve permission requests (vibesafu hooks)
-    // --verbose is required when using -p with --output-format=stream-json
-    const args = ['-p', '--verbose', '--output-format', 'stream-json', prompt];
-    if (resumeSessionId) {
-      args.push('--resume', resumeSessionId);
-    }
-
-    const claude = spawn('claude', args, {
-      cwd,
-      stdio: ['inherit', 'pipe', 'pipe'],
-      env: { ...process.env, FORCE_COLOR: '0' },
-    });
-
-    let output = '';
-    let errorOutput = '';
-    let sessionId: string | undefined;
-    let buffer = '';
-
-    claude.stdout.on('data', (data) => {
-      buffer += data.toString();
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        try {
-          const event = JSON.parse(line);
-          if (event.session_id) sessionId = event.session_id;
-          // Extract text content for output
-          if (event.type === 'assistant' && event.message?.content) {
-            for (const block of event.message.content) {
-              if (block.type === 'text' && block.text) {
-                output += block.text;
-                onOutput?.(block.text);
-              }
-            }
-          }
-        } catch {
-          output += line + '\n';
-          onOutput?.(line + '\n');
-        }
-      }
-    });
-
-    claude.stderr.on('data', (data) => {
-      errorOutput += data.toString();
-    });
-
-    claude.on('close', (code) => {
-      resolve({
-        success: code === 0,
-        output: output || errorOutput,
-        sessionId,
-      });
-    });
-
-    claude.on('error', (err) => {
-      resolve({
-        success: false,
-        output: err.message,
-        sessionId,
-      });
-    });
+): Promise<{ success: boolean; output: string; sessionId?: string; costUsd?: number }> {
+  const byokKey = getApiKey();
+  const result = await execute(prompt, {
+    cwd,
+    resumeSessionId,
+    ...(byokKey && { env: { ANTHROPIC_API_KEY: byokKey } }),
+    onStreamEvent: onOutput
+      ? (event) => { if (event.type === 'text') onOutput(event.content); }
+      : undefined,
   });
+
+  return {
+    success: result.success,
+    output: result.output,
+    sessionId: result.sessionId || undefined,
+    costUsd: result.cost.totalCostUsd,
+  };
 }
 
 /**
- * Execute Claude Code with post-execution monitoring
+ * Execute Claude Code with post-execution monitoring using the Agent SDK.
  *
  * Pre-execution security is handled by vibesafe (npm install -g vibesafe && vibesafe install).
  * This function handles post-execution detection:
  * 1. Takes file snapshot before execution
- * 2. Runs Claude Code
+ * 2. Runs Claude Code via SDK
  * 3. Checks for sensitive file changes after execution
  */
 export async function executeClaudeCodeSecure(
   prompt: string,
   options: SecureExecutionOptions
-): Promise<{ success: boolean; output: string; securityEvents: SecurityEvent[]; sessionId?: string }> {
+): Promise<{ success: boolean; output: string; securityEvents: SecurityEvent[]; sessionId?: string; costUsd?: number }> {
   const { cwd, onOutput, onSecurityEvent, resumeSessionId } = options;
   const securityEvents: SecurityEvent[] = [];
 
   // Take snapshot of project files before execution
   const beforeSnapshot = await takeFileSnapshot(cwd);
 
-  return new Promise((resolve) => {
-    // Run Claude Code with stream-json for session ID tracking
-    // stdin is inherited so user can approve permission requests (vibesafu hooks)
-    // --verbose is required when using -p with --output-format=stream-json
-    const args = [
-      '-p',
-      '--verbose',
-      '--output-format', 'stream-json',
-      prompt,
-    ];
-    if (resumeSessionId) {
-      args.push('--resume', resumeSessionId);
-    }
-
-    const claude = spawn('claude', args, {
-      cwd,
-      stdio: ['inherit', 'pipe', 'pipe'],
-      env: { ...process.env, FORCE_COLOR: '0' },
-    });
-
-    let output = '';
-    let errorOutput = '';
-    let sessionId: string | undefined;
-    let buffer = '';
-
-    claude.stdout.on('data', (data) => {
-      buffer += data.toString();
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        try {
-          const event = JSON.parse(line);
-          if (event.session_id) sessionId = event.session_id;
-          // Extract text content for output
-          if (event.type === 'assistant' && event.message?.content) {
-            for (const block of event.message.content) {
-              if (block.type === 'text' && block.text) {
-                output += block.text;
-                onOutput?.(block.text);
-              }
-            }
-          }
-        } catch {
-          output += line + '\n';
-          onOutput?.(line + '\n');
-        }
-      }
-    });
-
-    claude.stderr.on('data', (data) => {
-      errorOutput += data.toString();
-    });
-
-    claude.on('close', async (code) => {
-      // Post-execution security check using analyzePostExecution
-      const afterSnapshot = await takeFileSnapshot(cwd);
-      const analysis = analyzePostExecution(beforeSnapshot, afterSnapshot);
-
-      // Check for sensitive file changes
-      if (analysis.envModified) {
-        const event: SecurityEvent = {
-          type: 'warning',
-          message: 'Environment files were modified (.env)',
-        };
-        securityEvents.push(event);
-        onSecurityEvent?.(event);
-      }
-
-      if (analysis.claudeMdModified) {
-        const event: SecurityEvent = {
-          type: 'warning',
-          message: 'CLAUDE.md was modified - please review changes',
-        };
-        securityEvents.push(event);
-        onSecurityEvent?.(event);
-      }
-
-      if (analysis.sensitiveFilesAccessed.length > 0) {
-        const event: SecurityEvent = {
-          type: 'warning',
-          message: `Sensitive files accessed: ${analysis.sensitiveFilesAccessed.join(', ')}`,
-        };
-        securityEvents.push(event);
-        onSecurityEvent?.(event);
-      }
-
-      if (analysis.deletedFiles.length > 0) {
-        const event: SecurityEvent = {
-          type: 'warning',
-          message: `Files deleted: ${analysis.deletedFiles.join(', ')}`,
-        };
-        securityEvents.push(event);
-        onSecurityEvent?.(event);
-      }
-
-      resolve({
-        success: code === 0,
-        output: output || errorOutput,
-        securityEvents,
-        sessionId,
-      });
-    });
-
-    claude.on('error', (err) => {
-      resolve({
-        success: false,
-        output: err.message,
-        securityEvents,
-        sessionId,
-      });
-    });
+  // Execute via SDK
+  const byokKey = getApiKey();
+  const result = await execute(prompt, {
+    cwd,
+    resumeSessionId,
+    ...(byokKey && { env: { ANTHROPIC_API_KEY: byokKey } }),
+    onStreamEvent: onOutput
+      ? (event) => { if (event.type === 'text') onOutput(event.content); }
+      : undefined,
   });
+
+  // Post-execution security check using analyzePostExecution
+  const afterSnapshot = await takeFileSnapshot(cwd);
+  const analysis = analyzePostExecution(beforeSnapshot, afterSnapshot);
+
+  // Check for sensitive file changes
+  if (analysis.envModified) {
+    const event: SecurityEvent = {
+      type: 'warning',
+      message: 'Environment files were modified (.env)',
+    };
+    securityEvents.push(event);
+    onSecurityEvent?.(event);
+  }
+
+  if (analysis.claudeMdModified) {
+    const event: SecurityEvent = {
+      type: 'warning',
+      message: 'CLAUDE.md was modified - please review changes',
+    };
+    securityEvents.push(event);
+    onSecurityEvent?.(event);
+  }
+
+  if (analysis.sensitiveFilesAccessed.length > 0) {
+    const event: SecurityEvent = {
+      type: 'warning',
+      message: `Sensitive files accessed: ${analysis.sensitiveFilesAccessed.join(', ')}`,
+    };
+    securityEvents.push(event);
+    onSecurityEvent?.(event);
+  }
+
+  if (analysis.deletedFiles.length > 0) {
+    const event: SecurityEvent = {
+      type: 'warning',
+      message: `Files deleted: ${analysis.deletedFiles.join(', ')}`,
+    };
+    securityEvents.push(event);
+    onSecurityEvent?.(event);
+  }
+
+  return {
+    success: result.success,
+    output: result.output,
+    securityEvents,
+    sessionId: result.sessionId || undefined,
+    costUsd: result.cost.totalCostUsd,
+  };
 }
 
 /**
@@ -377,6 +273,8 @@ export async function executeClaudeCodeSecure(
  *
  * Note: These are baseline safety checks. If a script doesn't exist,
  * it's treated as "passed" (not applicable for this project type).
+ *
+ * Note: Still uses spawn because these run pnpm commands, not Claude.
  */
 export async function runAutomatedChecks(
   projectPath: string
@@ -624,9 +522,9 @@ export async function executeMilestone(
       ctx.onSessionId?.(result.sessionId);
     }
 
-    // Update cost tracking
+    // Update cost tracking (real SDK cost)
     ctx.state.totalPrompts++;
-    ctx.state.totalCost = ctx.state.totalPrompts * ESTIMATED_COST_PER_PROMPT;
+    ctx.state.totalCost += result.costUsd || 0;
     onProgress(ctx.state);
 
     if (!result.success) {
@@ -677,7 +575,7 @@ export async function executeMilestone(
     });
 
     ctx.state.totalPrompts++;
-    ctx.state.totalCost = ctx.state.totalPrompts * ESTIMATED_COST_PER_PROMPT;
+    ctx.state.totalCost += fixResult.costUsd || 0;
     ctx.state.failedAttempts++;
     onProgress(ctx.state);
 

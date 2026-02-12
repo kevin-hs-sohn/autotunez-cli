@@ -1,21 +1,85 @@
-import { describe, it, expect } from 'vitest';
-import { generateQAPrompt, parseQAReport } from './qa-agent';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { FSDMilestone } from '../types.js';
 
-describe('QA Agent', () => {
-  describe('generateQAPrompt', () => {
-    const milestone: FSDMilestone = {
-      id: 'm1',
-      title: 'Login Feature',
-      description: 'Implement user authentication',
-      estimatedPrompts: 5,
-      dependencies: [],
-      qaGoal: 'Test login with valid/invalid credentials, empty fields, special chars',
-      status: 'in_progress',
-    };
+// ── Mocks ───────────────────────────────────────────────────────────────────
 
+const { mockExecute, mockReadFile, mockGetApiKey } = vi.hoisted(() => ({
+  mockExecute: vi.fn(),
+  mockReadFile: vi.fn(),
+  mockGetApiKey: vi.fn(),
+}));
+
+vi.mock('../core/agent-executor.js', () => ({
+  execute: mockExecute,
+}));
+
+vi.mock('fs/promises', async (importOriginal) => {
+  const actual = await importOriginal() as Record<string, unknown>;
+  return {
+    ...actual,
+    readFile: mockReadFile,
+  };
+});
+
+vi.mock('../config.js', () => ({
+  getApiKey: mockGetApiKey,
+}));
+
+import { generateQAPrompt, parseQAReport, spawnQAAgent } from './qa-agent';
+
+// ── Helpers ─────────────────────────────────────────────────────────────────
+
+function makeSuccessResult(overrides: Record<string, unknown> = {}) {
+  return {
+    success: true,
+    output: 'QA checks completed.',
+    sessionId: 'sess-qa',
+    cost: { totalCostUsd: 0.03, inputTokens: 300, outputTokens: 200, modelUsage: {} },
+    numTurns: 2,
+    durationMs: 800,
+    ...overrides,
+  };
+}
+
+const sampleMilestone: FSDMilestone = {
+  id: 'm1',
+  title: 'Login Feature',
+  description: 'Implement user authentication',
+  dependencies: [],
+  qaGoal: 'Test login with valid/invalid credentials, empty fields, special chars',
+  status: 'in_progress',
+};
+
+const sampleQAReport = `# QA Report: Login Feature
+
+## Result: PASS
+
+## How I Tested
+- Used curl to test API endpoints
+- Started dev server and tested UI
+
+## Issues Found
+- No issues found
+
+## Console Errors
+- None
+
+## Recommendations
+- Add rate limiting
+`;
+
+// ── Tests ───────────────────────────────────────────────────────────────────
+
+describe('QA Agent', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  // ── Pure function tests (existing) ──────────────────────────────────────
+
+  describe('generateQAPrompt', () => {
     it('should generate autonomous QA prompt with milestone info', () => {
-      const prompt = generateQAPrompt(milestone);
+      const prompt = generateQAPrompt(sampleMilestone);
 
       expect(prompt).toContain('Login Feature');
       expect(prompt).toContain('Implement user authentication');
@@ -23,14 +87,14 @@ describe('QA Agent', () => {
     });
 
     it('should include qaGoal in prompt', () => {
-      const prompt = generateQAPrompt(milestone);
+      const prompt = generateQAPrompt(sampleMilestone);
 
       expect(prompt).toContain('valid/invalid credentials');
       expect(prompt).toContain('empty fields');
     });
 
     it('should tell agent it has full access to tools', () => {
-      const prompt = generateQAPrompt(milestone);
+      const prompt = generateQAPrompt(sampleMilestone);
 
       expect(prompt).toContain('bash');
       expect(prompt).toContain('filesystem');
@@ -39,7 +103,7 @@ describe('QA Agent', () => {
     });
 
     it('should encourage exploratory testing approach', () => {
-      const prompt = generateQAPrompt(milestone);
+      const prompt = generateQAPrompt(sampleMilestone);
 
       expect(prompt).toContain('Figure out how to verify');
       expect(prompt).toContain('REAL USER');
@@ -48,7 +112,7 @@ describe('QA Agent', () => {
     });
 
     it('should request structured report format', () => {
-      const prompt = generateQAPrompt(milestone);
+      const prompt = generateQAPrompt(sampleMilestone);
 
       expect(prompt).toContain('# QA Report');
       expect(prompt).toContain('## Result: PASS | FAIL');
@@ -174,6 +238,112 @@ describe('QA Agent', () => {
       expect(result.testApproach).toEqual([]);
       expect(result.issues).toEqual([]);
       expect(result.consoleErrors).toEqual([]);
+    });
+  });
+
+  // ── spawnQAAgent (SDK delegation) ───────────────────────────────────────
+
+  describe('spawnQAAgent', () => {
+    it('should call execute() with QA prompt and project path', async () => {
+      mockExecute.mockResolvedValue(makeSuccessResult());
+      mockReadFile.mockResolvedValue(sampleQAReport);
+      const onLog = vi.fn();
+
+      await spawnQAAgent(sampleMilestone, '/project', onLog);
+
+      expect(mockExecute).toHaveBeenCalledWith(
+        expect.stringContaining('Login Feature'),
+        expect.objectContaining({ cwd: '/project' }),
+      );
+    });
+
+    it('should read qa-report.md from project path', async () => {
+      mockExecute.mockResolvedValue(makeSuccessResult());
+      mockReadFile.mockResolvedValue(sampleQAReport);
+      const onLog = vi.fn();
+
+      const result = await spawnQAAgent(sampleMilestone, '/project', onLog);
+
+      expect(mockReadFile).toHaveBeenCalledWith(
+        expect.stringContaining('qa-report.md'),
+        'utf-8',
+      );
+      expect(result.status).toBe('PASS');
+    });
+
+    it('should fall back to output parsing when qa-report.md not found', async () => {
+      mockExecute.mockResolvedValue(makeSuccessResult({
+        output: `# QA Report: Login Feature\n\n## Result: FAIL\n\n## How I Tested\n- Manual test\n\n## Issues Found\n- [critical] Broken login\n\n## Console Errors\n- None\n`,
+      }));
+      mockReadFile.mockRejectedValue(new Error('ENOENT'));
+      const onLog = vi.fn();
+
+      const result = await spawnQAAgent(sampleMilestone, '/project', onLog);
+
+      expect(result.status).toBe('FAIL');
+    });
+
+    it('should return FAIL result when execution fails and no report available', async () => {
+      mockExecute.mockResolvedValue(makeSuccessResult({ success: false, output: 'Error occurred' }));
+      mockReadFile.mockRejectedValue(new Error('ENOENT'));
+      const onLog = vi.fn();
+
+      const result = await spawnQAAgent(sampleMilestone, '/project', onLog);
+
+      // No qa-report.md, output doesn't contain QA Report, success=false → FAIL
+      expect(result.status).toBe('FAIL');
+    });
+
+    it('should forward stream events to onLog', async () => {
+      mockExecute.mockImplementation(async (_prompt: string, opts: { onStreamEvent?: (e: { type: string; content: string }) => void }) => {
+        opts.onStreamEvent?.({ type: 'text', content: 'Testing login...' });
+        return makeSuccessResult();
+      });
+      mockReadFile.mockResolvedValue(sampleQAReport);
+      const onLog = vi.fn();
+
+      await spawnQAAgent(sampleMilestone, '/project', onLog);
+
+      expect(onLog).toHaveBeenCalledWith('Testing login...');
+    });
+
+    it('should log start and finish messages', async () => {
+      mockExecute.mockResolvedValue(makeSuccessResult());
+      mockReadFile.mockResolvedValue(sampleQAReport);
+      const onLog = vi.fn();
+
+      await spawnQAAgent(sampleMilestone, '/project', onLog);
+
+      expect(onLog).toHaveBeenCalledWith('Spawning QA Agent...');
+      expect(onLog).toHaveBeenCalledWith(expect.stringContaining('QA Agent finished'));
+    });
+
+    it('should inject BYOK API key as env when available', async () => {
+      mockGetApiKey.mockReturnValue('sk-ant-byok-qa-key');
+      mockExecute.mockResolvedValue(makeSuccessResult());
+      mockReadFile.mockResolvedValue(sampleQAReport);
+      const onLog = vi.fn();
+
+      await spawnQAAgent(sampleMilestone, '/project', onLog);
+
+      expect(mockExecute).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          env: { ANTHROPIC_API_KEY: 'sk-ant-byok-qa-key' },
+        }),
+      );
+    });
+
+    it('should not set env when no BYOK key', async () => {
+      mockGetApiKey.mockReturnValue(undefined);
+      mockExecute.mockResolvedValue(makeSuccessResult());
+      mockReadFile.mockResolvedValue(sampleQAReport);
+      const onLog = vi.fn();
+
+      await spawnQAAgent(sampleMilestone, '/project', onLog);
+
+      const callArgs = mockExecute.mock.calls[0][1];
+      expect(callArgs.env).toBeUndefined();
     });
   });
 });
