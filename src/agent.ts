@@ -1,5 +1,6 @@
 import { ApiClient } from './api-client.js';
 import { getApiKey, getAutotunezKey, getServerUrl, getModelPreference } from './config.js';
+import { classifyComplexity } from './complexity-classifier.js';
 
 export interface AgentResponse {
   type: 'clarification' | 'prompt';
@@ -59,6 +60,13 @@ export async function transformPrompt(
   options?: TransformOptions
 ): Promise<AgentResponse> {
   const apiClient = getApiClient();
+
+  // In auto mode, classify complexity and set hint for the server
+  const modelPreference = getModelPreference();
+  if (modelPreference === 'auto' && userInput.trim()) {
+    const classification = classifyComplexity(userInput);
+    apiClient.setComplexityHint(classification.suggestedModel);
+  }
 
   if (options) {
     return apiClient.transform(

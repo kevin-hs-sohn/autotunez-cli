@@ -181,6 +181,29 @@ describe('ApiClient', () => {
     expect(options.headers['X-Model-Preference']).toBeUndefined();
   });
 
+  it('should include X-Complexity-Hint header when complexity hint is set', async () => {
+    mockFetch.mockResolvedValue(
+      mockJsonResponse({ type: 'prompt', content: 'refined' })
+    );
+
+    client.setComplexityHint('opus');
+    await client.transform('test input', '# CLAUDE.md');
+
+    const [, options] = mockFetch.mock.calls[0];
+    expect(options.headers['X-Complexity-Hint']).toBe('opus');
+  });
+
+  it('should not include X-Complexity-Hint header when not set', async () => {
+    mockFetch.mockResolvedValue(
+      mockJsonResponse({ type: 'prompt', content: 'refined' })
+    );
+
+    await client.transform('test input', '# CLAUDE.md');
+
+    const [, options] = mockFetch.mock.calls[0];
+    expect(options.headers['X-Complexity-Hint']).toBeUndefined();
+  });
+
   it('should call correct path for compact', async () => {
     mockFetch.mockResolvedValue(
       mockJsonResponse({

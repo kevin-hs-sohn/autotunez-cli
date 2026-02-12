@@ -14,12 +14,24 @@ vi.mock('./config.js', () => ({
 
 // Mock ApiClient
 const mockTransform = vi.fn();
+const mockSetComplexityHint = vi.fn();
 
 vi.mock('./api-client.js', () => ({
   ApiClient: class MockApiClient {
     constructor(_opts: unknown) {}
     transform = mockTransform;
+    setComplexityHint = mockSetComplexityHint;
   },
+}));
+
+// Mock complexity classifier
+vi.mock('./complexity-classifier.js', () => ({
+  classifyComplexity: (input: string) => ({
+    level: input.includes('아키텍처') ? 'complex' : 'simple',
+    suggestedModel: input.includes('아키텍처') ? 'opus' : 'haiku',
+    confidence: 0.7,
+    reasons: ['test'],
+  }),
 }));
 
 import { transformPrompt, chatStructured, ApiKeyRequiredError } from './agent';
@@ -144,6 +156,28 @@ describe('agent', () => {
         history,
         undefined
       );
+    });
+  });
+
+  describe('complexity hint integration', () => {
+    it('should set complexity hint when model preference is auto', async () => {
+      mockGetApiKey.mockReturnValue(testAnthropicKey);
+      mockGetAutotunezKey.mockReturnValue(testAutotunezKey);
+      mockTransform.mockResolvedValue({ type: 'prompt', content: 'test' });
+
+      await transformPrompt('add a button');
+
+      expect(mockSetComplexityHint).toHaveBeenCalledWith('haiku');
+    });
+
+    it('should set opus hint for complex Korean input', async () => {
+      mockGetApiKey.mockReturnValue(testAnthropicKey);
+      mockGetAutotunezKey.mockReturnValue(testAutotunezKey);
+      mockTransform.mockResolvedValue({ type: 'prompt', content: 'test' });
+
+      await transformPrompt('아키텍처 설계');
+
+      expect(mockSetComplexityHint).toHaveBeenCalledWith('opus');
     });
   });
 

@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { config as loadDotenv } from 'dotenv';
 import type { ModelTier } from './api-types.js';
+import type { BillingMode } from './core/types.js';
 
 const CONFIG_DIR = path.join(os.homedir(), '.autotunez');
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
@@ -131,4 +132,13 @@ export function setModelPreference(tier: ModelTier): void {
   const config = loadConfig();
   config.modelPreference = tier;
   saveConfig(config);
+}
+
+/**
+ * Determine billing mode based on API key availability.
+ * - BYOK: user has their own Anthropic API key → platform fee only (15%)
+ * - Managed: no own key → full markup (100%)
+ */
+export function getBillingMode(): BillingMode {
+  return getApiKey() ? 'byok' : 'managed';
 }
