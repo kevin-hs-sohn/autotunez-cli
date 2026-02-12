@@ -158,6 +158,42 @@ describe('config', () => {
     });
   });
 
+  describe('getBillingMode', () => {
+    it('should return byok when apiKey is configured in config file', async () => {
+      const { setApiKey, getBillingMode } = await import('./config');
+      setApiKey('sk-ant-test-key-for-byok-mode');
+      expect(getBillingMode()).toBe('byok');
+    });
+
+    it('should return byok when ANTHROPIC_API_KEY env var is set', async () => {
+      const originalKey = process.env.ANTHROPIC_API_KEY;
+      process.env.ANTHROPIC_API_KEY = 'sk-ant-env-key-for-byok-test';
+      try {
+        const { getBillingMode } = await import('./config');
+        expect(getBillingMode()).toBe('byok');
+      } finally {
+        if (originalKey !== undefined) {
+          process.env.ANTHROPIC_API_KEY = originalKey;
+        } else {
+          delete process.env.ANTHROPIC_API_KEY;
+        }
+      }
+    });
+
+    it('should return managed when no API key is configured', async () => {
+      const originalKey = process.env.ANTHROPIC_API_KEY;
+      delete process.env.ANTHROPIC_API_KEY;
+      try {
+        const { getBillingMode } = await import('./config');
+        expect(getBillingMode()).toBe('managed');
+      } finally {
+        if (originalKey !== undefined) {
+          process.env.ANTHROPIC_API_KEY = originalKey;
+        }
+      }
+    });
+  });
+
   describe('hasSeenWelcome / markWelcomeSeen', () => {
     it('should return false when welcome not seen', async () => {
       const { hasSeenWelcome } = await import('./config');

@@ -32,6 +32,7 @@ export class ApiClient {
   private autotunezKey: string | undefined;
   private anthropicKey: string | undefined;
   private modelPreference: ModelTier | undefined;
+  private complexityHint: string | undefined;
 
   constructor(options: {
     serverUrl?: string;
@@ -59,6 +60,10 @@ export class ApiClient {
     this.anthropicKey = key;
   }
 
+  setComplexityHint(hint: string): void {
+    this.complexityHint = hint;
+  }
+
   private async request<TReq, TRes>(path: string, body: TReq): Promise<TRes> {
     if (!this.autotunezKey) {
       throw new Error(
@@ -80,6 +85,10 @@ export class ApiClient {
 
     if (this.modelPreference) {
       headers['X-Model-Preference'] = this.modelPreference;
+    }
+
+    if (this.complexityHint) {
+      headers['X-Complexity-Hint'] = this.complexityHint;
     }
 
     const response = await fetch(`${this.baseUrl}${path}`, {

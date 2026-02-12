@@ -1,6 +1,7 @@
-import { spawn } from 'child_process';
-import { writeFile, mkdir } from 'fs/promises';
+import { writeFile, mkdir, readFile } from 'fs/promises';
 import { join } from 'path';
+import { execute } from '../core/agent-executor.js';
+import { getApiKey } from '../config.js';
 import { FSDMilestone, FSDQAResult, FSDQAIssue } from '../types.js';
 
 /**
@@ -156,7 +157,7 @@ export function parseQAReport(markdown: string): FSDQAResult {
 }
 
 /**
- * Spawn QA Agent as Claude Code subprocess.
+ * Run QA Agent using the Agent SDK.
  *
  * The agent autonomously decides how to verify the milestone.
  * No hardcoded project type detection - Claude Code figures it out.
@@ -170,68 +171,38 @@ export async function spawnQAAgent(
 
   onLog('Spawning QA Agent...');
 
-  return new Promise((resolve) => {
-    const qaProcess = spawn('claude', ['--print', '-p', qaPrompt], {
-      cwd: projectPath,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, FORCE_COLOR: '0' },
-    });
-
-    let output = '';
-
-    qaProcess.stdout.on('data', (data) => {
-      const chunk = data.toString();
-      output += chunk;
-      onLog(chunk);
-    });
-
-    qaProcess.stderr.on('data', (data) => {
-      onLog(data.toString());
-    });
-
-    qaProcess.on('close', async (code) => {
-      onLog(`QA Agent finished with code ${code}`);
-
-      // Try to read qa-report.md
-      try {
-        const { readFile } = await import('fs/promises');
-        const reportPath = join(projectPath, 'qa-report.md');
-        const reportContent = await readFile(reportPath, 'utf-8');
-        const result = parseQAReport(reportContent);
-        resolve(result);
-      } catch {
-        // No report file, try to parse from output
-        if (output.includes('# QA Report')) {
-          const result = parseQAReport(output);
-          resolve(result);
-        } else {
-          // Return empty result
-          resolve({
-            status: code === 0 ? 'PASS' : 'FAIL',
-            summary: { totalFlows: 0, passed: 0, failed: 0 },
-            testApproach: [],
-            issues: [],
-            consoleErrors: [],
-            networkFailures: [],
-            recommendations: [],
-          });
-        }
-      }
-    });
-
-    qaProcess.on('error', (err) => {
-      onLog(`QA Agent error: ${err.message}`);
-      resolve({
-        status: 'FAIL',
-        summary: { totalFlows: 0, passed: 0, failed: 0 },
-        testApproach: [],
-        issues: [{ severity: 'critical', description: `QA Agent failed: ${err.message}` }],
-        consoleErrors: [],
-        networkFailures: [],
-        recommendations: [],
-      });
-    });
+  const byokKey = getApiKey();
+  const result = await execute(qaPrompt, {
+    cwd: projectPath,
+    ...(byokKey && { env: { ANTHROPIC_API_KEY: byokKey } }),
+    onStreamEvent: (event) => {
+      if (event.type === 'text') onLog(event.content);
+    },
   });
+
+  onLog(`QA Agent finished (success=${result.success})`);
+
+  // Try to read qa-report.md
+  try {
+    const reportPath = join(projectPath, 'qa-report.md');
+    const reportContent = await readFile(reportPath, 'utf-8');
+    return parseQAReport(reportContent);
+  } catch {
+    // No report file, try to parse from output
+    if (result.output.includes('# QA Report')) {
+      return parseQAReport(result.output);
+    }
+    // Return empty result
+    return {
+      status: result.success ? 'PASS' : 'FAIL',
+      summary: { totalFlows: 0, passed: 0, failed: 0 },
+      testApproach: [],
+      issues: [],
+      consoleErrors: [],
+      networkFailures: [],
+      recommendations: [],
+    };
+  }
 }
 
 /**

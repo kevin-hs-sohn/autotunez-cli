@@ -641,7 +641,7 @@ async function runQAWithFixLoop(
     });
 
     ctx.state.totalPrompts++;
-    ctx.state.totalCost = ctx.state.totalPrompts * 0.10;
+    ctx.state.totalCost += fixResult.costUsd || 0;
 
     if (!fixResult.success) {
       console.log(chalk.red('Fix attempt failed.'));

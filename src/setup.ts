@@ -128,7 +128,7 @@ export async function runSetup(cwd: string, initialInput?: string): Promise<bool
       },
       onComplete: async () => {
         if (!extractedConfig) {
-          throw new Error('프로젝트 정보를 추출하지 못했습니다.');
+          throw new Error('Failed to extract project info. Please try the setup again.');
         }
 
         const files: Array<{ name: string; content: string }> = [
@@ -183,7 +183,7 @@ export async function runSetup(cwd: string, initialInput?: string): Promise<bool
     return success;
   } catch (error) {
     if (error instanceof Error) {
-      console.log(chalk.red(`\n✗ 셋업 실패: ${error.message}`));
+      console.log(chalk.red(`\n✗ Setup failed: ${error.message}`));
     }
     return false;
   }
