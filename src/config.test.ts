@@ -18,10 +18,12 @@ vi.mock('os', async (importOriginal) => {
 });
 
 describe('config', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     if (fs.existsSync(TEST_CONFIG_DIR)) {
       fs.rmSync(TEST_CONFIG_DIR, { recursive: true });
     }
+    const { _clearConfigCache } = await import('./config');
+    _clearConfigCache();
   });
 
   afterEach(() => {

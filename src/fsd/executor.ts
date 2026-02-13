@@ -52,33 +52,33 @@ export function checkCostLimit(state: FSDExecutionState, config: FSDConfig): {
   return { ok: true };
 }
 
+// Secret detection patterns for output scanning.
+// Extracted as module-level constant for maintainability.
+const SECRET_DETECTION_PATTERNS: RegExp[] = [
+  // API keys with common prefixes
+  /\b(sk-[a-zA-Z0-9_-]{20,})/gi,              // OpenAI, Anthropic style
+  /\b(sk_live_[a-zA-Z0-9_-]{20,})/gi,         // Stripe live
+  /\b(sk_test_[a-zA-Z0-9_-]{20,})/gi,         // Stripe test
+  /\b(pk_live_[a-zA-Z0-9_-]{20,})/gi,         // Stripe public live
+  /\b(pk_test_[a-zA-Z0-9_-]{20,})/gi,         // Stripe public test
+  /\b(ghp_[a-zA-Z0-9]{36})/gi,                // GitHub PAT
+  /\b(gho_[a-zA-Z0-9]{36})/gi,                // GitHub OAuth
+  /\b(glpat-[a-zA-Z0-9_-]{20,})/gi,           // GitLab PAT
+  /\b(xox[baprs]-[a-zA-Z0-9-]{10,})/gi,       // Slack tokens
+  /\b(AKIA[0-9A-Z]{16})/gi,                   // AWS access key
+  /\b(eyJ[a-zA-Z0-9_-]{20,}\.[a-zA-Z0-9_-]{20,}\.[a-zA-Z0-9_-]{20,})/gi, // JWT
+  // Environment variable values (when exposed)
+  /\b([A-Z_]+_KEY|[A-Z_]+_SECRET|[A-Z_]+_TOKEN)=["']?([^"'\s]{8,})["']?/gi,
+  /\b(password|passwd|pwd)\s*[=:]\s*["']?([^"'\s]{4,})["']?/gi,
+];
+
 /**
  * Redact sensitive information from text
  * Masks API keys, tokens, secrets that might be in logs or reports
  */
 export function redactSecrets(text: string): string {
-  // Common secret patterns
-  const patterns = [
-    // API keys with common prefixes
-    /\b(sk-[a-zA-Z0-9_-]{20,})/gi,              // OpenAI, Anthropic style
-    /\b(sk_live_[a-zA-Z0-9_-]{20,})/gi,         // Stripe live
-    /\b(sk_test_[a-zA-Z0-9_-]{20,})/gi,         // Stripe test
-    /\b(pk_live_[a-zA-Z0-9_-]{20,})/gi,         // Stripe public live
-    /\b(pk_test_[a-zA-Z0-9_-]{20,})/gi,         // Stripe public test
-    /\b(ghp_[a-zA-Z0-9]{36})/gi,                // GitHub PAT
-    /\b(gho_[a-zA-Z0-9]{36})/gi,                // GitHub OAuth
-    /\b(glpat-[a-zA-Z0-9_-]{20,})/gi,           // GitLab PAT
-    /\b(xox[baprs]-[a-zA-Z0-9-]{10,})/gi,       // Slack tokens
-    /\b(AKIA[0-9A-Z]{16})/gi,                   // AWS access key
-    /\b(eyJ[a-zA-Z0-9_-]{20,}\.[a-zA-Z0-9_-]{20,}\.[a-zA-Z0-9_-]{20,})/gi, // JWT
-
-    // Environment variable values (when exposed)
-    /\b([A-Z_]+_KEY|[A-Z_]+_SECRET|[A-Z_]+_TOKEN)=["']?([^"'\s]{8,})["']?/gi,
-    /\b(password|passwd|pwd)\s*[=:]\s*["']?([^"'\s]{4,})["']?/gi,
-  ];
-
   let result = text;
-  for (const pattern of patterns) {
+  for (const pattern of SECRET_DETECTION_PATTERNS) {
     result = result.replace(pattern, '***REDACTED***');
   }
 
@@ -164,14 +164,15 @@ export interface SecurityEvent {
 /**
  * Execute a Claude Code prompt using the Agent SDK and return the output.
  */
-export async function executeClaudeCode(
+// Shared SDK execution logic for both standard and secure modes
+function executeViaSdk(
   prompt: string,
   cwd: string,
   onOutput?: (chunk: string) => void,
-  resumeSessionId?: string
-): Promise<{ success: boolean; output: string; sessionId?: string; costUsd?: number }> {
+  resumeSessionId?: string,
+) {
   const byokKey = getApiKey();
-  const result = await execute(prompt, {
+  return execute(prompt, {
     cwd,
     resumeSessionId,
     ...(byokKey && { env: { ANTHROPIC_API_KEY: byokKey } }),
@@ -179,6 +180,15 @@ export async function executeClaudeCode(
       ? (event) => { if (event.type === 'text') onOutput(event.content); }
       : undefined,
   });
+}
+
+export async function executeClaudeCode(
+  prompt: string,
+  cwd: string,
+  onOutput?: (chunk: string) => void,
+  resumeSessionId?: string
+): Promise<{ success: boolean; output: string; sessionId?: string; costUsd?: number }> {
+  const result = await executeViaSdk(prompt, cwd, onOutput, resumeSessionId);
 
   return {
     success: result.success,
@@ -208,15 +218,7 @@ export async function executeClaudeCodeSecure(
   const beforeSnapshot = await takeFileSnapshot(cwd);
 
   // Execute via SDK
-  const byokKey = getApiKey();
-  const result = await execute(prompt, {
-    cwd,
-    resumeSessionId,
-    ...(byokKey && { env: { ANTHROPIC_API_KEY: byokKey } }),
-    onStreamEvent: onOutput
-      ? (event) => { if (event.type === 'text') onOutput(event.content); }
-      : undefined,
-  });
+  const result = await executeViaSdk(prompt, cwd, onOutput, resumeSessionId);
 
   // Post-execution security check using analyzePostExecution
   const afterSnapshot = await takeFileSnapshot(cwd);

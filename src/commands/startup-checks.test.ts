@@ -171,21 +171,14 @@ describe('startup-checks', () => {
   });
 
   describe('checkBYOK', () => {
-    it('should set env var and return byok when API key exists', () => {
+    it('should return byok with key when API key exists (no side effect)', () => {
       mockGetApiKey.mockReturnValue('sk-ant-test');
 
       const result = checkBYOK();
       expect(result.mode).toBe('byok');
-      expect(process.env.ANTHROPIC_API_KEY).toBe('sk-ant-test');
-    });
-
-    it('should not override existing env var', () => {
-      process.env.ANTHROPIC_API_KEY = 'sk-existing';
-      mockGetApiKey.mockReturnValue('sk-ant-test');
-
-      const result = checkBYOK();
-      expect(result.mode).toBe('byok');
-      expect(process.env.ANTHROPIC_API_KEY).toBe('sk-existing');
+      expect(result.anthropicKey).toBe('sk-ant-test');
+      // Should NOT mutate process.env (caller's responsibility)
+      expect(process.env.ANTHROPIC_API_KEY).toBeUndefined();
     });
 
     it('should return managed when no API key', () => {
@@ -193,6 +186,7 @@ describe('startup-checks', () => {
 
       const result = checkBYOK();
       expect(result.mode).toBe('managed');
+      expect(result.anthropicKey).toBeUndefined();
     });
   });
 });

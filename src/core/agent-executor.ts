@@ -129,7 +129,7 @@ function buildSDKOptions(options: AgentExecutorOptions): Record<string, unknown>
   const env = options.environment;
   const abortController = new AbortController();
   if (env.abortSignal) {
-    env.abortSignal.addEventListener('abort', () => abortController.abort());
+    env.abortSignal.addEventListener('abort', () => abortController.abort(), { once: true });
   }
 
   const sdkOpts: Record<string, unknown> = {
@@ -153,7 +153,7 @@ function buildSDKOptions(options: AgentExecutorOptions): Record<string, unknown>
 function buildSDKOptionsFromSimple(options: SimpleExecutorOptions): Record<string, unknown> {
   const abortController = new AbortController();
   if (options.abortSignal) {
-    options.abortSignal.addEventListener('abort', () => abortController.abort());
+    options.abortSignal.addEventListener('abort', () => abortController.abort(), { once: true });
   }
 
   const sdkOpts: Record<string, unknown> = {

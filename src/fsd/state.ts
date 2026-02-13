@@ -2,7 +2,6 @@ import * as fs from 'fs';
 import * as path from 'path';
 import {
   FSDExecutionState,
-  FSDMilestone,
   FSDConfig,
   FSDPlanResponse,
 } from '../types.js';
@@ -63,7 +62,12 @@ export async function saveFSDState(
   };
 
   const statePath = getStateFilePath(projectPath);
-  fs.writeFileSync(statePath, JSON.stringify(state, null, 2), 'utf-8');
+  const tmpPath = statePath + '.tmp';
+
+  // Atomic write: write to temp file first, then rename
+  // (rename is atomic on the same filesystem)
+  fs.writeFileSync(tmpPath, JSON.stringify(state, null, 2), 'utf-8');
+  fs.renameSync(tmpPath, statePath);
 
   return statePath;
 }
@@ -155,27 +159,3 @@ export function getResumeInfo(projectPath: string): {
   };
 }
 
-/**
- * Update milestone status in saved state
- */
-export function updateMilestoneInState(
-  projectPath: string,
-  milestoneId: string,
-  status: FSDMilestone['status']
-): void {
-  const state = loadFSDState(projectPath);
-  if (!state) return;
-
-  const milestone = state.plan.milestones.find((m) => m.id === milestoneId);
-  if (milestone) {
-    milestone.status = status;
-    saveFSDState(
-      projectPath,
-      state.goal,
-      state.plan,
-      state.executionState,
-      state.config,
-      state.gitState
-    );
-  }
-}

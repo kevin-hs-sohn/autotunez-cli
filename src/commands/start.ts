@@ -143,7 +143,10 @@ async function runPreflight(): Promise<{
 
   // 5. BYOK / Auth
   const byok = checkBYOK();
-  if (byok.mode === 'byok') {
+  if (byok.mode === 'byok' && byok.anthropicKey) {
+    if (!process.env.ANTHROPIC_API_KEY) {
+      process.env.ANTHROPIC_API_KEY = byok.anthropicKey;
+    }
     console.log(chalk.green('✓ Using your Anthropic API key (BYOK mode)'));
     console.log(chalk.gray('  Platform fee: 15% | You pay API costs directly\n'));
   } else {
@@ -395,15 +398,20 @@ async function runClassicMode(
         }
       };
 
+      const CHAR_CTRL_C = 3;
+      const CHAR_ENTER = 13;
+      const CHAR_BACKSPACE = 127;
+      const MAX_INPUT_HISTORY = 100;
+
       const onData = (key: string) => {
         const code = key.charCodeAt(0);
-        if (code === 3) { stdin.setRawMode(false); stdin.removeListener('data', onData); console.log(); resolve('exit'); return; }
-        if (code === 13) {
+        if (code === CHAR_CTRL_C) { stdin.setRawMode(false); stdin.removeListener('data', onData); console.log(); resolve('exit'); return; }
+        if (code === CHAR_ENTER) {
           stdin.setRawMode(false); stdin.removeListener('data', onData); console.log();
-          if (buffer.trim() && history[0] !== buffer.trim()) { history.unshift(buffer.trim()); if (history.length > 100) history.pop(); }
+          if (buffer.trim() && history[0] !== buffer.trim()) { history.unshift(buffer.trim()); if (history.length > MAX_INPUT_HISTORY) history.pop(); }
           resolve(buffer); return;
         }
-        if (code === 127) { if (cursorPos > 0) { buffer = buffer.slice(0, cursorPos - 1) + buffer.slice(cursorPos); cursorPos--; redraw(); } return; }
+        if (code === CHAR_BACKSPACE) { if (cursorPos > 0) { buffer = buffer.slice(0, cursorPos - 1) + buffer.slice(cursorPos); cursorPos--; redraw(); } return; }
         if (key.startsWith('\x1b[')) {
           if (key === '\x1b[A' && historyIndex < history.length - 1) { if (historyIndex === -1) currentInput = buffer; historyIndex++; buffer = history[historyIndex]; cursorPos = buffer.length; redraw(); }
           else if (key === '\x1b[B' && historyIndex > -1) { historyIndex--; buffer = historyIndex === -1 ? currentInput : history[historyIndex]; cursorPos = buffer.length; redraw(); }
