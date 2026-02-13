@@ -8,6 +8,8 @@ import type { BillingMode } from './core/types.js';
 const CONFIG_DIR = path.join(os.homedir(), '.autotunez');
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
 
+let _configCache: Config | null = null;
+
 // Load .env from current directory if exists
 loadDotenv();
 
@@ -20,15 +22,22 @@ interface Config {
 }
 
 export function loadConfig(): Config {
+  if (_configCache) return _configCache;
   try {
     if (fs.existsSync(CONFIG_FILE)) {
       const data = fs.readFileSync(CONFIG_FILE, 'utf-8');
-      return JSON.parse(data);
+      _configCache = JSON.parse(data);
+      return _configCache!;
     }
   } catch {
     // Ignore errors, return empty config
   }
-  return {};
+  _configCache = {};
+  return _configCache;
+}
+
+export function _clearConfigCache(): void {
+  _configCache = null;
 }
 
 export function saveConfig(config: Config): void {
@@ -38,6 +47,7 @@ export function saveConfig(config: Config): void {
   fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2), {
     mode: 0o600,
   });
+  _configCache = config;
 }
 
 export function validateApiKey(key: string): boolean {

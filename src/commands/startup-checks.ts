@@ -16,14 +16,6 @@ export interface CreditInfo {
   usedToday: number;
 }
 
-export interface StartupContext {
-  autotunezKey: string;
-  creditInfo?: CreditInfo;
-  claudeCodeVersion?: string;
-  vibesafuActive: boolean;
-  billingMode: 'byok' | 'managed';
-}
-
 // --- autotunez API key ---
 
 export async function checkAutotunezKey(
@@ -63,13 +55,8 @@ export async function fetchCreditInfo(autotunezKey: string): Promise<CreditInfo 
 }
 
 export async function refreshCredits(autotunezKey: string): Promise<CreditInfo | null> {
-  const apiClient = new ApiClient({ autotunezKey });
   try {
-    const usage = await apiClient.getUsage();
-    return {
-      balance: (usage.totalCredits - usage.usedCredits) * 0.001,
-      usedToday: usage.usedCredits * 0.001,
-    };
+    return await fetchCreditInfo(autotunezKey);
   } catch {
     return null;
   }
@@ -104,13 +91,10 @@ export function installVibesafu(): { success: boolean; error?: string } {
 
 // --- BYOK ---
 
-export function checkBYOK(): { mode: 'byok' | 'managed' } {
+export function checkBYOK(): { mode: 'byok' | 'managed'; anthropicKey?: string } {
   const byokKey = getApiKey();
   if (byokKey) {
-    if (!process.env.ANTHROPIC_API_KEY) {
-      process.env.ANTHROPIC_API_KEY = byokKey;
-    }
-    return { mode: 'byok' };
+    return { mode: 'byok', anthropicKey: byokKey };
   }
   return { mode: 'managed' };
 }
