@@ -278,6 +278,9 @@ export async function executeClaudeCodeSecure(
  *
  * Note: Still uses spawn because these run pnpm commands, not Claude.
  */
+const CHECK_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes per check
+const MAX_OUTPUT_BYTES = 512 * 1024; // 512 KB max output buffer
+
 export async function runAutomatedChecks(
   projectPath: string
 ): Promise<FSDAutomatedChecks> {
@@ -294,16 +297,35 @@ export async function runAutomatedChecks(
       });
 
       let output = '';
+      let outputBytes = 0;
+      let timedOut = false;
 
-      proc.stdout.on('data', (data) => {
-        output += data.toString();
-      });
+      // Timeout: kill after CHECK_TIMEOUT_MS
+      const timer = setTimeout(() => {
+        timedOut = true;
+        proc.kill('SIGTERM');
+      }, CHECK_TIMEOUT_MS);
 
-      proc.stderr.on('data', (data) => {
-        output += data.toString();
-      });
+      const appendOutput = (data: Buffer) => {
+        const chunk = data.toString();
+        outputBytes += data.length;
+        if (outputBytes <= MAX_OUTPUT_BYTES) {
+          output += chunk;
+        }
+        // Drop data silently once over limit (prevent OOM)
+      };
+
+      proc.stdout.on('data', appendOutput);
+      proc.stderr.on('data', appendOutput);
 
       proc.on('close', (code) => {
+        clearTimeout(timer);
+
+        if (timedOut) {
+          resolve({ passed: false, output: `Command timed out after ${CHECK_TIMEOUT_MS / 1000}s: ${command}` });
+          return;
+        }
+
         // Treat "missing script" as passed (not applicable)
         const isMissingScript = output.includes('Missing script') ||
                                 output.includes('no such file or directory') ||
@@ -321,6 +343,7 @@ export async function runAutomatedChecks(
       });
 
       proc.on('error', () => {
+        clearTimeout(timer);
         // Command doesn't exist = probably not a JS project, treat as passed
         resolve({ passed: true, output: undefined });
       });
@@ -499,24 +522,31 @@ export async function executeMilestone(
     onLog('Executing Claude Code (security via PreToolUse hooks)...');
 
     // Always use secure execution - security is handled via PreToolUse hooks
-    const result = await executeClaudeCodeSecure(prompt, {
-      cwd: ctx.projectPath,
-      resumeSessionId: ctx.state.claudeSessionId,
-      onOutput: (chunk) => {
-        onLog(redactSecrets(chunk));
-      },
-      onSecurityEvent: (event) => {
-        if (event.type === 'blocked') {
-          onLog(`🚫 BLOCKED: ${event.message}`);
-        } else if (event.type === 'warning') {
-          onLog(`⚠️  WARNING: ${event.message}`);
-        } else if (event.type === 'checkpoint') {
-          onLog(`🔍 Security checkpoint: ${event.message}`);
-        } else if (event.type === 'approved') {
-          onLog(`✅ Approved: ${event.message}`);
-        }
-      },
-    });
+    let result: Awaited<ReturnType<typeof executeClaudeCodeSecure>>;
+    try {
+      result = await executeClaudeCodeSecure(prompt, {
+        cwd: ctx.projectPath,
+        resumeSessionId: ctx.state.claudeSessionId,
+        onOutput: (chunk) => {
+          onLog(redactSecrets(chunk));
+        },
+        onSecurityEvent: (event) => {
+          if (event.type === 'blocked') {
+            onLog(`🚫 BLOCKED: ${event.message}`);
+          } else if (event.type === 'warning') {
+            onLog(`⚠️  WARNING: ${event.message}`);
+          } else if (event.type === 'checkpoint') {
+            onLog(`🔍 Security checkpoint: ${event.message}`);
+          } else if (event.type === 'approved') {
+            onLog(`✅ Approved: ${event.message}`);
+          }
+        },
+      });
+    } catch (error) {
+      onLog(`SDK execution error: ${error instanceof Error ? error.message : String(error)}`);
+      ctx.state.failedAttempts++;
+      continue;
+    }
 
     // Update session ID for context continuity
     if (result.sessionId) {
@@ -572,9 +602,26 @@ export async function executeMilestone(
     onLog('Automated checks failed, attempting fix...');
 
     const fixPrompt = generateFixPrompt(checks, learnings);
-    const fixResult = await executeClaudeCode(fixPrompt, ctx.projectPath, (chunk) => {
-      onLog(redactSecrets(chunk));
-    });
+    let fixResult: Awaited<ReturnType<typeof executeClaudeCodeSecure>>;
+    try {
+      fixResult = await executeClaudeCodeSecure(fixPrompt, {
+        cwd: ctx.projectPath,
+        resumeSessionId: ctx.state.claudeSessionId,
+        onOutput: (chunk) => {
+          onLog(redactSecrets(chunk));
+        },
+      });
+    } catch (error) {
+      onLog(`Fix SDK error: ${error instanceof Error ? error.message : String(error)}`);
+      ctx.state.failedAttempts++;
+      continue;
+    }
+
+    // Update session ID for context continuity
+    if (fixResult.sessionId) {
+      ctx.state.claudeSessionId = fixResult.sessionId;
+      ctx.onSessionId?.(fixResult.sessionId);
+    }
 
     ctx.state.totalPrompts++;
     ctx.state.totalCost += fixResult.costUsd || 0;
@@ -624,6 +671,55 @@ function generateLearningFromFailure(checks: FSDAutomatedChecks): string | null 
   if (!checks.test.passed && checks.test.output) {
     if (checks.test.output.includes('mock')) {
       return 'Ensure all external dependencies are properly mocked in tests';
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Validate milestone dependency DAG: no circular deps, no invalid refs.
+ * Returns null if valid, or an error message if invalid.
+ */
+export function validateMilestoneDeps(
+  milestones: FSDMilestone[]
+): string | null {
+  const ids = new Set(milestones.map(m => m.id));
+
+  // Check for invalid references
+  for (const m of milestones) {
+    for (const dep of m.dependsOn) {
+      if (!ids.has(dep)) {
+        return `Milestone "${m.id}" depends on unknown milestone "${dep}"`;
+      }
+    }
+  }
+
+  // Check for circular dependencies via DFS
+  const visited = new Set<string>();
+  const inStack = new Set<string>();
+
+  function hasCycle(id: string): boolean {
+    if (inStack.has(id)) return true;
+    if (visited.has(id)) return false;
+
+    visited.add(id);
+    inStack.add(id);
+
+    const milestone = milestones.find(m => m.id === id);
+    if (milestone) {
+      for (const dep of milestone.dependsOn) {
+        if (hasCycle(dep)) return true;
+      }
+    }
+
+    inStack.delete(id);
+    return false;
+  }
+
+  for (const m of milestones) {
+    if (hasCycle(m.id)) {
+      return `Circular dependency detected involving milestone "${m.id}"`;
     }
   }
 

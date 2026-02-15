@@ -60,6 +60,14 @@ export async function getCurrentBranch(cwd: string): Promise<string> {
 }
 
 /**
+ * Checkout an existing branch
+ */
+export async function checkoutBranch(cwd: string, branch: string): Promise<boolean> {
+  const result = await runGit(cwd, ['checkout', branch]);
+  return result.success;
+}
+
+/**
  * Generate FSD branch name from goal
  */
 export function generateFSDBranchName(goal: string): string {

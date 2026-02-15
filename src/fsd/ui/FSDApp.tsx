@@ -78,14 +78,14 @@ export function FSDApp({
   });
 
   const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null);
-  const [isAborted, setIsAborted] = useState(false);
+  const [isAborted] = useState(false);
 
-  // Handle ESC to abort
+  // Handle ESC to pause (consistent with ink-output-handler)
   useInput((input, key) => {
     if (key.escape && !isAborted) {
-      setIsAborted(true);
+      // ESC = pause, not abort. Ctrl+C is for abort (handled by SIGINT).
       onAbort();
-      setState(prev => ({ ...prev, phase: 'error', error: 'Aborted by user' }));
+      setState(prev => ({ ...prev, phase: 'error', error: 'Paused by user (ESC)' }));
     }
 
     // Handle Y/N for confirm prompts
@@ -244,7 +244,7 @@ export function FSDApp({
       {/* Footer hint */}
       <Box marginTop={1}>
         <Text color="gray">
-          {confirmRequest ? 'Press Y to confirm, N to cancel' : 'Press ESC to abort'}
+          {confirmRequest ? 'Press Y to confirm, N to cancel' : 'Press ESC to pause | Ctrl+C to save & exit'}
         </Text>
       </Box>
     </Box>

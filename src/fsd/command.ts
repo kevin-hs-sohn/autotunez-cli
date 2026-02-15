@@ -16,6 +16,7 @@ import {
   createDefaultConfig,
   redactSecrets,
   generateQAFixPrompt,
+  validateMilestoneDeps,
   type ExecutorContext,
 } from './executor.js';
 import { spawnQAAgent, saveQAReport } from './qa-agent.js';
@@ -24,6 +25,8 @@ import {
   completeFSDGitSession,
   getFSDGitRules,
   getCurrentBranch,
+  checkoutBranch,
+  removeFSDPrePushHook,
   type GitState,
 } from './git-protection.js';
 import { getSafetyRules } from './safety.js';
@@ -45,6 +48,43 @@ const MAX_QA_FIX_ATTEMPTS = 3;
 
 // Global output handler - can be swapped for different UI modes
 let output: FSDOutputHandler = new ConsoleOutputHandler();
+
+// SIGINT/SIGTERM graceful shutdown state
+let sigintCleanup: (() => Promise<void>) | null = null;
+let sigintHandled = false;
+
+function registerSigintHandler(cleanup: () => Promise<void>): void {
+  sigintCleanup = cleanup;
+  sigintHandled = false;
+}
+
+function clearSigintHandler(): void {
+  sigintCleanup = null;
+  sigintHandled = false;
+}
+
+async function handleShutdownSignal(signal: string): Promise<void> {
+  if (sigintHandled) {
+    // Second signal = force exit
+    console.log(chalk.red(`\n${signal} received again — force exiting.`));
+    process.exit(1);
+  }
+  sigintHandled = true;
+  console.log(chalk.yellow(`\n${signal} received — saving state before exit...`));
+
+  if (sigintCleanup) {
+    try {
+      await sigintCleanup();
+      console.log(chalk.green('State saved. Resume with: autotunez fsd --resume'));
+    } catch (err) {
+      console.error(chalk.red('Failed to save state:'), err);
+    }
+  }
+  process.exit(0);
+}
+
+process.on('SIGINT', () => { void handleShutdownSignal('SIGINT'); });
+process.on('SIGTERM', () => { void handleShutdownSignal('SIGTERM'); });
 
 export function setOutputHandler(handler: FSDOutputHandler): void {
   output = handler;
@@ -79,16 +119,32 @@ export interface FSDOptions {
   abortSignal?: AbortSignal;
 }
 
-// Module-level state for interactive mode during pause
-let currentSessionId: string | undefined;
-let currentExecutionState: import('../types.js').FSDExecutionState | undefined;
-let currentPlan: FSDPlanResponse | undefined;
-let currentGoal: string | undefined;
+/**
+ * FSDContext encapsulates execution state that was previously spread
+ * across module-level variables. A single instance is created per
+ * runFSDMode / resumeFSDSession call.
+ */
+class FSDContext {
+  sessionId: string | undefined;
+  executionState: import('../types.js').FSDExecutionState | undefined;
+  plan: FSDPlanResponse | undefined;
+  goal: string | undefined;
+
+  clear(): void {
+    this.sessionId = undefined;
+    this.executionState = undefined;
+    this.plan = undefined;
+    this.goal = undefined;
+  }
+}
+
+// Single active context — replaced per session, never shared across sessions
+const fsdCtx = new FSDContext();
 
 export async function runFSDMode(goal: string | undefined, options: FSDOptions = {}): Promise<void> {
   const cwd = process.cwd();
   const maxCost = parseFloat(options.maxCost || '10');
-  currentGoal = goal || undefined;
+  fsdCtx.goal = goal || undefined;
 
   // Check project setup BEFORE Ink initialization (to avoid stdin conflicts)
   if (needsSetup(cwd)) {
@@ -134,7 +190,7 @@ export async function runFSDMode(goal: string | undefined, options: FSDOptions =
       // Execute with Claude Code in the current session context
       const result = await executeWithClaudeCode(input, {
         cwd,
-        resumeSessionId: currentSessionId,
+        resumeSessionId: fsdCtx.sessionId,
         onStreamEvent: (event) => {
           if (event.type === 'text') {
             output.output(event.content);
@@ -146,21 +202,21 @@ export async function runFSDMode(goal: string | undefined, options: FSDOptions =
 
       // Update session ID for continuity
       if (result.sessionId) {
-        currentSessionId = result.sessionId;
-        if (currentExecutionState) {
-          currentExecutionState.claudeSessionId = result.sessionId;
+        fsdCtx.sessionId = result.sessionId;
+        if (fsdCtx.executionState) {
+          fsdCtx.executionState.claudeSessionId = result.sessionId;
           // Save interaction to history
-          if (!currentExecutionState.interactiveHistory) {
-            currentExecutionState.interactiveHistory = [];
+          if (!fsdCtx.executionState.interactiveHistory) {
+            fsdCtx.executionState.interactiveHistory = [];
           }
-          currentExecutionState.interactiveHistory.push({
+          fsdCtx.executionState.interactiveHistory.push({
             role: 'user',
             content: input,
             timestamp: Date.now(),
           });
           // Save state after interactive session
-          if (currentPlan && currentGoal) {
-            await saveFSDState(cwd, currentGoal, currentPlan, currentExecutionState, createDefaultConfig({ maxCost }), null);
+          if (fsdCtx.plan && fsdCtx.goal) {
+            await saveFSDState(cwd, fsdCtx.goal, fsdCtx.plan, fsdCtx.executionState, createDefaultConfig({ maxCost }), null);
           }
         }
       }
@@ -293,6 +349,13 @@ export async function runFSDMode(goal: string | undefined, options: FSDOptions =
     process.exit(1);
   }
 
+  // Validate milestone dependency graph
+  const dagError = validateMilestoneDeps(plan.milestones);
+  if (dagError) {
+    output.error(`Invalid plan: ${dagError}`);
+    process.exit(1);
+  }
+
   // Display plan
   output.showPlan({
     milestones: plan.milestones.map(m => ({
@@ -358,6 +421,11 @@ async function resumeFSDSession(
     const currentBranch = await getCurrentBranch(cwd);
     if (currentBranch !== gitState.fsdBranch) {
       console.log(chalk.yellow(`Switching to FSD branch: ${gitState.fsdBranch}`));
+      const switched = await checkoutBranch(cwd, gitState.fsdBranch);
+      if (!switched) {
+        console.log(chalk.red(`Failed to checkout branch ${gitState.fsdBranch}. You may have uncommitted changes.`));
+        process.exit(1);
+      }
     }
   }
 
@@ -390,6 +458,12 @@ async function executePlan(
   }
 
   // --- EXECUTION PHASE ---
+  // Register SIGINT handler to save state and clean up hooks on Ctrl+C
+  registerSigintHandler(async () => {
+    await saveFSDState(cwd, goal, plan, state, config, gitState);
+    await removeFSDPrePushHook(cwd);
+  });
+
   console.log(chalk.bold.cyan('\nFSD Mode - Executing\n'));
 
   const config = existingConfig ?? createDefaultConfig({
@@ -401,10 +475,10 @@ async function executePlan(
   state.mode = 'executing';
 
   // Update module-level state for interactive mode access
-  currentExecutionState = state;
-  currentPlan = plan;
-  currentGoal = goal;
-  currentSessionId = state.claudeSessionId;
+  fsdCtx.executionState = state;
+  fsdCtx.plan = plan;
+  fsdCtx.goal = goal;
+  fsdCtx.sessionId = state.claudeSessionId;
 
   // Combine git rules and safety rules
   const gitRules = gitState ? getFSDGitRules(gitState.fsdBranch) : '';
@@ -424,7 +498,7 @@ async function executePlan(
       output.output(redactSecrets(msg) + '\n');
     },
     onSessionId: (sessionId) => {
-      currentSessionId = sessionId;
+      fsdCtx.sessionId = sessionId;
       state.claudeSessionId = sessionId;
     },
   };
@@ -556,6 +630,9 @@ async function executePlan(
   if (state.completedMilestones.length === plan.milestones.length) {
     clearFSDState(cwd);
   }
+
+  // Deregister SIGINT handler — execution is done
+  clearSigintHandler();
 }
 
 /**
@@ -575,11 +652,16 @@ async function runQAWithFixLoop(
     console.log(chalk.gray(`Running QA (attempt ${attempts}/${MAX_QA_FIX_ATTEMPTS})...`));
     ctx.state.mode = 'reviewing';
 
-    const qaResult = await spawnQAAgent(
+    const { qaResult, costUsd: qaCost } = await spawnQAAgent(
       milestone,
       cwd,
       (msg) => output.output(redactSecrets(msg))
     );
+
+    // Track QA cost in execution state
+    ctx.state.totalCost += qaCost;
+    ctx.state.totalPrompts++;
+    ctx.onProgress(ctx.state);
 
     const reportPath = await saveQAReport(qaResult, milestone, cwd);
     console.log(chalk.gray('QA report saved: ' + reportPath));
@@ -626,6 +708,7 @@ async function runQAWithFixLoop(
 
     const fixResult = await executeClaudeCodeSecure(fixPrompt, {
       cwd,
+      resumeSessionId: ctx.state.claudeSessionId,
       onOutput: (chunk) => {
         output.output(redactSecrets(chunk));
       },
@@ -639,6 +722,12 @@ async function runQAWithFixLoop(
         }
       },
     });
+
+    // Preserve session ID from fix execution
+    if (fixResult.sessionId) {
+      ctx.state.claudeSessionId = fixResult.sessionId;
+      ctx.onSessionId?.(fixResult.sessionId);
+    }
 
     ctx.state.totalPrompts++;
     ctx.state.totalCost += fixResult.costUsd || 0;
