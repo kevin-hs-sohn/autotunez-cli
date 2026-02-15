@@ -4,6 +4,8 @@ import { execute } from '../core/agent-executor.js';
 import { getApiKey } from '../config.js';
 import { FSDMilestone, FSDQAResult, FSDQAIssue } from '../types.js';
 
+const QA_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes max for QA
+
 /**
  * Generate QA prompt for autonomous verification.
  *
@@ -113,7 +115,8 @@ export function parseQAReport(markdown: string): FSDQAResult {
       const severity = match[1].toLowerCase() as FSDQAIssue['severity'];
       const description = match[2].trim();
 
-      const evidenceMatch = issuesMatch[1].slice(match.index).match(/Evidence:\s*(.+)/i);
+      const afterIssue = issuesMatch[1].slice(match.index + match[0].length);
+      const evidenceMatch = afterIssue.match(/Evidence:\s*(.+)/i);
       const evidence = evidenceMatch?.[1]?.trim();
 
       if (description && !description.toLowerCase().includes('no issues')) {
@@ -162,45 +165,79 @@ export function parseQAReport(markdown: string): FSDQAResult {
  * The agent autonomously decides how to verify the milestone.
  * No hardcoded project type detection - Claude Code figures it out.
  */
+export interface QAAgentResult {
+  qaResult: FSDQAResult;
+  costUsd: number;
+}
+
 export async function spawnQAAgent(
   milestone: FSDMilestone,
   projectPath: string,
   onLog: (message: string) => void
-): Promise<FSDQAResult> {
+): Promise<QAAgentResult> {
   const qaPrompt = generateQAPrompt(milestone);
 
   onLog('Spawning QA Agent...');
 
   const byokKey = getApiKey();
-  const result = await execute(qaPrompt, {
-    cwd: projectPath,
-    ...(byokKey && { env: { ANTHROPIC_API_KEY: byokKey } }),
-    onStreamEvent: (event) => {
-      if (event.type === 'text') onLog(event.content);
-    },
-  });
 
-  onLog(`QA Agent finished (success=${result.success})`);
+  // Execute with timeout
+  let result: Awaited<ReturnType<typeof execute>>;
+  try {
+    result = await Promise.race([
+      execute(qaPrompt, {
+        cwd: projectPath,
+        ...(byokKey && { env: { ANTHROPIC_API_KEY: byokKey } }),
+        onStreamEvent: (event) => {
+          if (event.type === 'text') onLog(event.content);
+        },
+      }),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('QA agent timed out')), QA_TIMEOUT_MS)
+      ),
+    ]);
+  } catch (error) {
+    onLog(`QA Agent error: ${error instanceof Error ? error.message : String(error)}`);
+    return {
+      qaResult: {
+        status: 'FAIL',
+        summary: { totalFlows: 0, passed: 0, failed: 0 },
+        testApproach: [],
+        issues: [{ severity: 'major', description: `QA execution failed: ${error instanceof Error ? error.message : 'Unknown error'}` }],
+        consoleErrors: [],
+        networkFailures: [],
+        recommendations: ['Re-run QA or verify manually'],
+      },
+      costUsd: 0,
+    };
+  }
+
+  const costUsd = result.cost?.totalCostUsd ?? 0;
+  onLog(`QA Agent finished (success=${result.success}, cost=$${costUsd.toFixed(4)})`);
 
   // Try to read qa-report.md
   try {
     const reportPath = join(projectPath, 'qa-report.md');
     const reportContent = await readFile(reportPath, 'utf-8');
-    return parseQAReport(reportContent);
+    return { qaResult: parseQAReport(reportContent), costUsd };
   } catch {
     // No report file, try to parse from output
     if (result.output.includes('# QA Report')) {
-      return parseQAReport(result.output);
+      return { qaResult: parseQAReport(result.output), costUsd };
     }
-    // Return empty result
+    // No report produced — mark as INCOMPLETE (not silent PASS)
+    onLog('Warning: QA agent did not produce a report.');
     return {
-      status: result.success ? 'PASS' : 'FAIL',
-      summary: { totalFlows: 0, passed: 0, failed: 0 },
-      testApproach: [],
-      issues: [],
-      consoleErrors: [],
-      networkFailures: [],
-      recommendations: [],
+      qaResult: {
+        status: 'FAIL',
+        summary: { totalFlows: 0, passed: 0, failed: 0 },
+        testApproach: [],
+        issues: [{ severity: 'major', description: 'QA agent did not produce a report (INCOMPLETE)' }],
+        consoleErrors: [],
+        networkFailures: [],
+        recommendations: ['Re-run QA or verify manually'],
+      },
+      costUsd,
     };
   }
 }

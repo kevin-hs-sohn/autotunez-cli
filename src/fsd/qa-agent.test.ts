@@ -268,7 +268,8 @@ describe('QA Agent', () => {
         expect.stringContaining('qa-report.md'),
         'utf-8',
       );
-      expect(result.status).toBe('PASS');
+      expect(result.qaResult.status).toBe('PASS');
+      expect(result.costUsd).toBeGreaterThanOrEqual(0);
     });
 
     it('should fall back to output parsing when qa-report.md not found', async () => {
@@ -280,7 +281,7 @@ describe('QA Agent', () => {
 
       const result = await spawnQAAgent(sampleMilestone, '/project', onLog);
 
-      expect(result.status).toBe('FAIL');
+      expect(result.qaResult.status).toBe('FAIL');
     });
 
     it('should return FAIL result when execution fails and no report available', async () => {
@@ -291,7 +292,7 @@ describe('QA Agent', () => {
       const result = await spawnQAAgent(sampleMilestone, '/project', onLog);
 
       // No qa-report.md, output doesn't contain QA Report, success=false → FAIL
-      expect(result.status).toBe('FAIL');
+      expect(result.qaResult.status).toBe('FAIL');
     });
 
     it('should forward stream events to onLog', async () => {
